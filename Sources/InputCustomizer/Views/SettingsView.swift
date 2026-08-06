@@ -5,18 +5,23 @@ struct SettingsView: View {
     @State private var selectedDevice: InputDevice = .trackpad
 
     var body: some View {
-        TabView(selection: $selectedDevice) {
-            RuleListView(device: .trackpad)
-                .tabItem { Label("Trackpad", systemImage: "hand.draw") }
-                .tag(InputDevice.trackpad)
+        VStack(spacing: 0) {
+            Toggle("Pause all rules", isOn: $settingsStore.isPaused)
+                .padding([.horizontal, .top])
 
-            RuleListView(device: .mouse)
-                .tabItem { Label("Mouse", systemImage: "computermouse") }
-                .tag(InputDevice.mouse)
+            TabView(selection: $selectedDevice) {
+                RuleListView(device: .trackpad)
+                    .tabItem { Label("Trackpad", systemImage: "hand.draw") }
+                    .tag(InputDevice.trackpad)
 
-            RuleListView(device: .keyboard)
-                .tabItem { Label("Keyboard", systemImage: "keyboard") }
-                .tag(InputDevice.keyboard)
+                RuleListView(device: .mouse)
+                    .tabItem { Label("Mouse", systemImage: "computermouse") }
+                    .tag(InputDevice.mouse)
+
+                RuleListView(device: .keyboard)
+                    .tabItem { Label("Keyboard", systemImage: "keyboard") }
+                    .tag(InputDevice.keyboard)
+            }
         }
         .frame(width: 520, height: 420)
         .environmentObject(settingsStore)
@@ -82,7 +87,7 @@ struct RuleListView: View {
 
     private func describe(_ trigger: Trigger) -> String {
         switch trigger {
-        case let .keyCombo(keyCode, _): return "Key code \(keyCode)"
+        case let .keyCombo(keyCode, modifiers): return KeyCodeMap.describe(keyCode: keyCode, modifiers: modifiers)
         case let .mouseButton(number, _): return "Button \(number)"
         case let .trackpadGesture(kind): return kind.rawValue
         }

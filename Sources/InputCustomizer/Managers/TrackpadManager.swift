@@ -68,7 +68,9 @@ final class TrackpadManager {
             ActionRunner.send(mediaKey: key)
         case .missionControl:
             ActionRunner.showMissionControl()
-        case .remapToKey, .none:
+        case let .remapToKey(keyCode, modifiers):
+            ActionRunner.sendKeyPress(keyCode: keyCode, modifiers: modifiers)
+        case .none:
             break
         }
     }

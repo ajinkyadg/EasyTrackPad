@@ -1,4 +1,5 @@
 import Cocoa
+import CoreGraphics
 
 /// Executes the non-remap actions a rule can trigger. Centralized here so
 /// keyboard/mouse/trackpad managers stay focused on "what triggered" and
@@ -57,5 +58,20 @@ enum ActionRunner {
 
     static func showMissionControl() {
         run(command: "open -a 'Mission Control'")
+    }
+
+    /// Posts a synthetic key press (down + up) with the given modifiers.
+    /// Used for "remap to key" actions on devices other than the keyboard
+    /// itself (mouse buttons, trackpad gestures), where there's no
+    /// intercepted keyboard CGEvent to rewrite in place.
+    static func sendKeyPress(keyCode: UInt16, modifiers: UInt) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let flags = CGEventFlags(rawValue: UInt64(modifiers))
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else { return }
+        down.flags = flags
+        up.flags = flags
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 }

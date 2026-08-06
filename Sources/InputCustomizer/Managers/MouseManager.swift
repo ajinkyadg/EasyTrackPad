@@ -76,8 +76,10 @@ final class MouseManager {
             ActionRunner.send(mediaKey: key)
         case .missionControl:
             ActionRunner.showMissionControl()
-        case .remapToKey, .none:
-            break // remapping a button to a keypress is handled in a later iteration
+        case let .remapToKey(keyCode, modifiers):
+            ActionRunner.sendKeyPress(keyCode: keyCode, modifiers: modifiers)
+        case .none:
+            break
         }
     }
 }

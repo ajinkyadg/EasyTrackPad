@@ -6,9 +6,13 @@ BetterTouchTool / MultitouchTool, built as a native Swift/SwiftUI app.
 
 ## Status
 
-Early scaffold. Core engines (keyboard remap, mouse button remap, trackpad
-gestures) and a basic rules UI are in place; see [Roadmap](#roadmap) for
-what's stubbed out vs. working.
+Usable for personal, day-to-day use via `Scripts/export-app.sh`. Core
+engines (keyboard remap, mouse button remap, trackpad gestures) work
+end to end, rules can be created for all three devices — including
+capturing a keyboard combo and remapping any trigger to a synthetic
+keypress — and there's a menu-bar "Pause All Rules" kill switch and a
+"Launch at Login" toggle. What's still missing is packaging for
+distribution off your own machine; see [Known gaps](#known-gaps--todo).
 
 ## Architecture
 
@@ -23,6 +27,7 @@ Sources/InputCustomizer/
     PermissionsHelper.swift Accessibility permission check/prompt
   Models/
     CustomizationRule.swift Trigger → Action rule model (Codable)
+    KeyCodeMap.swift        keyCode/modifiers <-> human-readable shortcut labels
   Storage/
     SettingsStore.swift     JSON persistence in ~/Library/Application Support
   Views/
@@ -61,7 +66,10 @@ On first launch, macOS will prompt for **Accessibility** access
 (System Settings → Privacy & Security → Accessibility). You may also need
 to grant **Input Monitoring** so the keyboard and mouse event taps receive
 events. After launch, look for the hand-tap icon in the menu bar →
-**Preferences…** to add rules per device.
+**Preferences…** to add rules per device. For a keyboard rule or a
+"Remap to Key" action, click **Record** and press the key combo you
+want. Use the menu bar's **Pause All Rules** item (or the toggle in
+Preferences) as a kill switch if a rule misbehaves.
 
 For development in Xcode:
 
@@ -88,17 +96,18 @@ of being unsupported/undocumented and liable to break on macOS updates.
 
 ## Known gaps / TODO
 
-- **Keyboard combo capture UI**: `AddRuleView` has a placeholder for
-  keyboard rules — needs a small "press a key to record it" capture
-  view (listen for one `NSEvent.addLocalMonitorForEvents(.keyDown)`,
-  store the keyCode + modifiers).
-- **Mouse → key remap**: `MouseManager.apply(action:)` doesn't yet
-  handle `.remapToKey` — needs a synthetic `CGEvent` keyDown/keyUp post.
-- **Launch at login**: not implemented; use `SMAppService` (macOS 13+)
-  when ready.
-- **Code signing / notarization**: needed for distribution outside the
-  App Store; not set up yet.
-- **Menu bar icon toggle for "pause all rules"**: quick win, not done.
+- **Code signing / notarization**: `export-app.sh` will sign with a
+  Developer ID Application identity if one is installed, otherwise
+  it falls back to ad-hoc signing (fine for running on your own Mac,
+  not for distributing the `.app` to someone else). Notarization for
+  distribution outside your own machine isn't set up.
+- **Mouse rule modifiers**: mouse button rules don't yet have a modifier
+  picker in `AddRuleView` (always `modifiers: 0`) — the model and
+  matching logic already support them, just no UI control for it.
+- **Launch at Login reliability**: `SMAppService` registration is most
+  reliable once the exported `.app` lives in `/Applications` — running
+  it from `dist/` or Xcode's DerivedData may not survive a reboot
+  consistently.
 
 ## Fixing bugs / extending
 

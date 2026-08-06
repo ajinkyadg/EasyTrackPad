@@ -1,4 +1,6 @@
 import SwiftUI
+import ServiceManagement
+import Combine
 
 @main
 struct InputCustomizerApp: App {
@@ -24,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let settingsStore = SettingsStore()
     private var statusItem: NSStatusItem?
     private var preferencesWindow: NSWindow?
+    private var pauseMenuItem: NSMenuItem?
+    private var launchAtLoginMenuItem: NSMenuItem?
+    private var cancellables: Set<AnyCancellable> = []
 
     private lazy var keyboardManager = KeyboardManager(settingsStore: settingsStore)
     private lazy var mouseManager = MouseManager(settingsStore: settingsStore)
@@ -32,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
+        observePauseState()
         checkPermissionsAndStart()
     }
 
@@ -42,9 +48,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Preferences…", action: #selector(openPreferences), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
+
+        let pauseItem = NSMenuItem(title: "Pause All Rules", action: #selector(togglePause), keyEquivalent: "")
+        pauseItem.target = self
+        pauseItem.state = settingsStore.isPaused ? .on : .off
+        menu.addItem(pauseItem)
+        pauseMenuItem = pauseItem
+
+        let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(loginItem)
+        launchAtLoginMenuItem = loginItem
+
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit InputCustomizer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
         statusItem = item
+    }
+
+    /// Keeps the menu checkmark and status-bar icon in sync when
+    /// `isPaused` changes from the Preferences window's toggle too.
+    private func observePauseState() {
+        settingsStore.$isPaused
+            .sink { [weak self] isPaused in
+                self?.pauseMenuItem?.state = isPaused ? .on : .off
+                self?.statusItem?.button?.image = NSImage(
+                    systemSymbolName: isPaused ? "hand.tap.fill" : "hand.tap",
+                    accessibilityDescription: "InputCustomizer"
+                )
+            }
+            .store(in: &cancellables)
+    }
+
+    @objc private func togglePause() {
+        settingsStore.isPaused.toggle()
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            NSLog("InputCustomizer: failed to toggle launch at login: \(error)")
+        }
+        launchAtLoginMenuItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 
     @objc private func openPreferences() {

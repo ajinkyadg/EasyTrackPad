@@ -10,6 +10,12 @@ final class SettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// When true, every manager skips rule matching entirely — a quick
+    /// "kill switch" without having to disable each rule individually.
+    @Published var isPaused: Bool = UserDefaults.standard.bool(forKey: "isPaused") {
+        didSet { UserDefaults.standard.set(isPaused, forKey: "isPaused") }
+    }
+
     private let fileURL: URL
 
     init() {
@@ -29,7 +35,8 @@ final class SettingsStore: ObservableObject {
     }
 
     func rules(for device: InputDevice) -> [CustomizationRule] {
-        rules.filter { $0.device == device && $0.isEnabled }
+        guard !isPaused else { return [] }
+        return rules.filter { $0.device == device && $0.isEnabled }
     }
 
     private func load() {
