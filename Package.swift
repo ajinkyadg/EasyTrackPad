@@ -10,8 +10,8 @@ let package = Package(
         .executableTarget(
             name: "InputCustomizer",
             path: "Sources/InputCustomizer",
-            resources: [
-                .process("Resources")
+            exclude: [
+                "Resources/Info.plist"
             ]
         ),
         .testTarget(

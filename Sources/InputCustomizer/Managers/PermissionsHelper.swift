@@ -7,23 +7,25 @@ import Foundation
 /// - Input Monitoring is requested implicitly the first time a low-level
 ///   event tap is created; macOS will prompt automatically.
 enum PermissionsHelper {
+    private static var promptOptionKey: String {
+        kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+    }
+
     static func hasAccessibilityPermission() -> Bool {
-        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: false]
+        let options: NSDictionary = [promptOptionKey: false]
         return AXIsProcessTrustedWithOptions(options)
     }
 
     static func promptForAccessibilityPermission() {
-        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true]
+        let options: NSDictionary = [promptOptionKey: true]
         _ = AXIsProcessTrustedWithOptions(options)
     }
 
     /// Polls every 2s until the permission is granted, then fires `handler` once.
     static func onAccessibilityGranted(_ handler: @escaping () -> Void) {
-        var timer: Timer?
-        timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { t in
+        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { t in
             if hasAccessibilityPermission() {
                 t.invalidate()
-                timer = nil
                 DispatchQueue.main.async { handler() }
             }
         }

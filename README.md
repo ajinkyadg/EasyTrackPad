@@ -44,22 +44,32 @@ so adding a rule in the UI takes effect immediately without restarting.
 ## Getting started
 
 This repo is a Swift Package, which is enough to build and iterate on
-logic (`swift build`, `swift test`), but a menu-bar app that installs
-event taps needs to run as a signed, bundled `.app` with entitlements —
-so the recommended flow is:
+logic (`swift build`, `swift test`). To use it like a normal menu-bar app
+on your own Mac, export a local `.app` bundle:
+
+```bash
+./Scripts/export-app.sh
+open dist/InputCustomizer.app
+```
+
+The script builds the release executable, wraps it in
+`dist/InputCustomizer.app`, copies the bundle metadata from
+`Sources/InputCustomizer/Resources/Info.plist`, and ad-hoc signs the app
+for local use.
+
+On first launch, macOS will prompt for **Accessibility** access
+(System Settings → Privacy & Security → Accessibility). You may also need
+to grant **Input Monitoring** so the keyboard and mouse event taps receive
+events. After launch, look for the hand-tap icon in the menu bar →
+**Preferences…** to add rules per device.
+
+For development in Xcode:
 
 1. Open the folder in Xcode: `File → Open…` → select this folder.
-   Xcode will read `Package.swift` and let you run the `InputCustomizer`
+2. Xcode will read `Package.swift` and let you run the `InputCustomizer`
    scheme directly.
-2. On first run, macOS will prompt for **Accessibility** access
-   (System Settings → Privacy & Security → Accessibility). This is
-   required for the keyboard/mouse event taps and trackpad gesture
-   monitors to receive events. The app polls for this and starts its
-   engines automatically once granted.
-3. Look for the hand-tap icon in the menu bar → **Preferences…** to add
-   rules per device.
 
-Alternatively, for pure logic development:
+For pure logic development:
 ```bash
 swift build
 swift test

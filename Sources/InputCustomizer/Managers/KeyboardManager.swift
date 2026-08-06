@@ -56,7 +56,7 @@ final class KeyboardManager {
         for rule in settingsStore.rules(for: .keyboard) {
             guard case let .keyCombo(ruleKeyCode, ruleModifiers) = rule.trigger,
                   ruleKeyCode == keyCode,
-                  UInt(ruleModifiers) == UInt(modifiers) & relevantModifierMask else { continue }
+                  UInt64(ruleModifiers) == modifiers & relevantModifierMask else { continue }
 
             apply(action: rule.action, to: event)
             return Unmanaged.passRetained(event)

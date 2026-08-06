@@ -5,9 +5,14 @@ struct InputCustomizerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
+        // No window-bearing scene here on purpose: this is a menu-bar-only
+        // (.accessory) app with no other window ever open, and SwiftUI's
+        // `Settings` scene shows itself via a responder-chain action
+        // (`showSettingsWindow:`) that isn't reliably delivered in that
+        // configuration — "Preferences…" would silently no-op. The
+        // AppDelegate manages its own NSWindow instead; see openPreferences().
         Settings {
-            SettingsView()
-                .environmentObject(appDelegate.settingsStore)
+            EmptyView()
         }
     }
 }
@@ -18,6 +23,7 @@ struct InputCustomizerApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let settingsStore = SettingsStore()
     private var statusItem: NSStatusItem?
+    private var preferencesWindow: NSWindow?
 
     private lazy var keyboardManager = KeyboardManager(settingsStore: settingsStore)
     private lazy var mouseManager = MouseManager(settingsStore: settingsStore)
@@ -43,11 +49,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openPreferences() {
         NSApp.activate(ignoringOtherApps: true)
-        if #available(macOS 14.0, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        } else {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        if preferencesWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
+                styleMask: [.titled, .closable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "InputCustomizer Preferences"
+            window.contentView = NSHostingView(
+                rootView: SettingsView().environmentObject(settingsStore)
+            )
+            window.isReleasedWhenClosed = false // keep our reference valid after the user closes it
+            window.center()
+            preferencesWindow = window
         }
+        preferencesWindow?.makeKeyAndOrderFront(nil)
     }
 
     private func checkPermissionsAndStart() {

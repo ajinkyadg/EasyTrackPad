@@ -6,6 +6,10 @@
     <string>InputCustomizer</string>
     <key>CFBundleIdentifier</key>
     <string>com.yourname.inputcustomizer</string>
+    <key>CFBundleExecutable</key>
+    <string>InputCustomizer</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
