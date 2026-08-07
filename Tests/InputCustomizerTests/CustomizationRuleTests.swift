@@ -7,7 +7,7 @@ final class CustomizationRuleTests: XCTestCase {
         let rule = CustomizationRule(
             name: "Test swipe",
             device: .trackpad,
-            trigger: .trackpadGesture(.swipeLeft),
+            trigger: .trackpadGesture(.threeFingerSwipeLeft),
             action: .missionControl
         )
         let data = try JSONEncoder().encode(rule)
@@ -15,8 +15,13 @@ final class CustomizationRuleTests: XCTestCase {
         XCTAssertEqual(rule, decoded)
     }
 
+    private func scratchStore() -> SettingsStore {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).json")
+        return SettingsStore(fileURL: url)
+    }
+
     func testRulesForDeviceFiltersByDeviceAndEnabled() {
-        let store = SettingsStore()
+        let store = scratchStore()
         store.rules = [
             CustomizationRule(name: "A", device: .mouse, trigger: .mouseButton(number: 3, modifiers: 0), action: .missionControl),
             CustomizationRule(name: "B", device: .trackpad, trigger: .trackpadGesture(.pinchIn), action: .missionControl),
@@ -26,7 +31,7 @@ final class CustomizationRuleTests: XCTestCase {
     }
 
     func testRulesForDeviceReturnsEmptyWhenPaused() {
-        let store = SettingsStore()
+        let store = scratchStore()
         defer { store.isPaused = false } // isPaused persists via UserDefaults.standard
         store.rules = [
             CustomizationRule(name: "A", device: .mouse, trigger: .mouseButton(number: 3, modifiers: 0), action: .missionControl)

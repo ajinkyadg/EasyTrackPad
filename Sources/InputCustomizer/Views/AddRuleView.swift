@@ -6,7 +6,7 @@ struct AddRuleView: View {
     let device: InputDevice
 
     @State private var name: String = ""
-    @State private var gesture: Trigger.GestureKind = .swipeLeft
+    @State private var gesture: Trigger.GestureKind = .twoFingerSwipeLeft
     @State private var mouseButtonNumber: Int = 3
     @State private var keyCode: UInt16 = KeyCodeMap.unset
     @State private var keyModifiers: UInt = 0
@@ -39,7 +39,7 @@ struct AddRuleView: View {
             switch device {
             case .trackpad:
                 Picker("Gesture", selection: $gesture) {
-                    ForEach(Trigger.GestureKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    ForEach(Trigger.GestureKind.allCases, id: \.self) { Text($0.displayName).tag($0) }
                 }
             case .mouse:
                 Stepper("Button number: \(mouseButtonNumber)", value: $mouseButtonNumber, in: 0...31)

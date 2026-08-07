@@ -39,6 +39,18 @@ struct RuleListView: View {
 
     var body: some View {
         VStack {
+            if device == .trackpad {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Gesture Sensitivity").font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Less").font(.caption2).foregroundStyle(.secondary)
+                        Slider(value: $settingsStore.gestureSensitivity, in: 0...1)
+                        Text("More").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.top, 4)
+            }
             List {
                 ForEach(rulesForDevice) { rule in
                     HStack {
@@ -89,7 +101,7 @@ struct RuleListView: View {
         switch trigger {
         case let .keyCombo(keyCode, modifiers): return KeyCodeMap.describe(keyCode: keyCode, modifiers: modifiers)
         case let .mouseButton(number, _): return "Button \(number)"
-        case let .trackpadGesture(kind): return kind.rawValue
+        case let .trackpadGesture(kind): return kind.displayName
         }
     }
 }

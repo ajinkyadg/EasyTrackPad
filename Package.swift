@@ -7,11 +7,25 @@ let package = Package(
         .macOS(.v13)
     ],
     targets: [
+        .systemLibrary(
+            name: "CMultitouchSupport",
+            path: "Sources/CMultitouchSupport"
+        ),
         .executableTarget(
             name: "InputCustomizer",
+            dependencies: ["CMultitouchSupport"],
             path: "Sources/InputCustomizer",
             exclude: [
                 "Resources/Info.plist"
+            ],
+            linkerSettings: [
+                // MultitouchSupport.framework is a private framework with no
+                // public SDK entry, so it isn't on the default framework
+                // search path — point the linker at it explicitly.
+                .unsafeFlags([
+                    "-F", "/System/Library/PrivateFrameworks",
+                    "-framework", "MultitouchSupport"
+                ])
             ]
         ),
         .testTarget(

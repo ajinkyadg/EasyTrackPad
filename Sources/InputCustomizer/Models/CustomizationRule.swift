@@ -14,10 +14,38 @@ enum Trigger: Codable, Hashable {
     case trackpadGesture(GestureKind)
 
     enum GestureKind: String, Codable, CaseIterable {
-        case swipeLeft, swipeRight, swipeUp, swipeDown
+        case twoFingerSwipeLeft, twoFingerSwipeRight, twoFingerSwipeUp, twoFingerSwipeDown
+        case threeFingerSwipeLeft, threeFingerSwipeRight, threeFingerSwipeUp, threeFingerSwipeDown
+        case fourFingerSwipeLeft, fourFingerSwipeRight, fourFingerSwipeUp, fourFingerSwipeDown
+        case twoFingerTap, threeFingerTap, fourFingerTap, fiveFingerTap
         case pinchIn, pinchOut
         case rotateClockwise, rotateCounterClockwise
-        case threeFingerTap, fourFingerTap
+
+        /// Human-readable label for pickers/rule lists, e.g. "3-Finger Swipe Left".
+        var displayName: String {
+            switch self {
+            case .twoFingerSwipeLeft: return "2-Finger Swipe Left"
+            case .twoFingerSwipeRight: return "2-Finger Swipe Right"
+            case .twoFingerSwipeUp: return "2-Finger Swipe Up"
+            case .twoFingerSwipeDown: return "2-Finger Swipe Down"
+            case .threeFingerSwipeLeft: return "3-Finger Swipe Left"
+            case .threeFingerSwipeRight: return "3-Finger Swipe Right"
+            case .threeFingerSwipeUp: return "3-Finger Swipe Up"
+            case .threeFingerSwipeDown: return "3-Finger Swipe Down"
+            case .fourFingerSwipeLeft: return "4-Finger Swipe Left"
+            case .fourFingerSwipeRight: return "4-Finger Swipe Right"
+            case .fourFingerSwipeUp: return "4-Finger Swipe Up"
+            case .fourFingerSwipeDown: return "4-Finger Swipe Down"
+            case .twoFingerTap: return "2-Finger Tap"
+            case .threeFingerTap: return "3-Finger Tap"
+            case .fourFingerTap: return "4-Finger Tap"
+            case .fiveFingerTap: return "5-Finger Tap"
+            case .pinchIn: return "Pinch In"
+            case .pinchOut: return "Pinch Out"
+            case .rotateClockwise: return "Rotate Clockwise"
+            case .rotateCounterClockwise: return "Rotate Counter-Clockwise"
+            }
+        }
     }
 }
 

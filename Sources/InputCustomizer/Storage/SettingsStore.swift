@@ -16,13 +16,28 @@ final class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(isPaused, forKey: "isPaused") }
     }
 
+    /// 0...1 — how easily trackpad swipes/taps trigger. See
+    /// `GestureRecognizer.sensitivity` for what it actually tunes.
+    @Published var gestureSensitivity: Double = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: "gestureSensitivity") != nil ? defaults.double(forKey: "gestureSensitivity") : 0.5
+    }() {
+        didSet { UserDefaults.standard.set(gestureSensitivity, forKey: "gestureSensitivity") }
+    }
+
     private let fileURL: URL
 
-    init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = appSupport.appendingPathComponent("InputCustomizer", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        fileURL = dir.appendingPathComponent("rules.json")
+    /// `fileURL` is injectable so tests can point at a scratch file instead
+    /// of silently reading/overwriting the real user's saved rules.
+    init(fileURL: URL? = nil) {
+        if let fileURL {
+            self.fileURL = fileURL
+        } else {
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            let dir = appSupport.appendingPathComponent("InputCustomizer", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            self.fileURL = dir.appendingPathComponent("rules.json")
+        }
         load()
     }
 

@@ -121,10 +121,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func checkPermissionsAndStart() {
         // Keyboard/mouse remapping needs Accessibility + Input Monitoring.
         // Trackpad gesture callbacks need Accessibility only.
-        guard PermissionsHelper.hasAccessibilityPermission() else {
+        let trusted = PermissionsHelper.hasAccessibilityPermission()
+        NSLog("InputCustomizer: launch permission check — Accessibility trusted = \(trusted)")
+        guard trusted else {
             PermissionsHelper.promptForAccessibilityPermission()
             // Poll until granted, then start the engines.
             PermissionsHelper.onAccessibilityGranted { [weak self] in
+                NSLog("InputCustomizer: Accessibility permission granted, starting engines")
                 self?.startEngines()
             }
             return
@@ -133,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startEngines() {
+        NSLog("InputCustomizer: starting keyboard/mouse/trackpad engines")
         keyboardManager.start()
         mouseManager.start()
         trackpadManager.start()

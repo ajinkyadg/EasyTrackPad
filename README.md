@@ -17,12 +17,15 @@ distribution off your own machine; see [Known gaps](#known-gaps--todo).
 ## Architecture
 
 ```
+Sources/CMultitouchSupport/    C declarations for the private MultitouchSupport.framework
 Sources/InputCustomizer/
   App.swift                 Menu bar app entry point, permission gating
   Managers/
-    KeyboardManager.swift   CGEventTap-based key interception/remap
-    MouseManager.swift      CGEventTap-based mouse button interception
-    TrackpadManager.swift   NSEvent gesture monitors (swipe/magnify/rotate)
+    KeyboardManager.swift        CGEventTap-based key interception/remap
+    MouseManager.swift           CGEventTap-based mouse button interception
+    TrackpadManager.swift        Owns pinch/rotate (NSEvent) + swipe/tap (multitouch)
+    MultitouchGestureEngine.swift Raw per-finger touch frames from CMultitouchSupport
+    GestureRecognizer.swift      Pure logic: touch frames → swipe/tap gesture events
     ActionRunner.swift      Shared "run this action" execution (shell, launch app, media key)
     PermissionsHelper.swift Accessibility permission check/prompt
   Models/
@@ -85,22 +88,66 @@ swift test
 
 ## Trackpad gestures
 
-The current implementation uses AppKit's public `NSEvent` gesture
-monitors (`.swipe`, `.magnify`, `.rotate`). This is deliberately
-conservative — it won't break across macOS point releases and needs no
-private frameworks — but it can't do things like raw finger-count taps
-(e.g. "3-finger tap" is only partially covered). If you need that level
-of control later, the private `MultitouchSupport.framework` (used by
-BetterTouchTool and others) exposes raw multitouch frames, at the cost
-of being unsupported/undocumented and liable to break on macOS updates.
+Swipes and taps are finger-count-aware (2/3/4-finger swipes in all four
+directions, 2-5-finger taps) via the private, undocumented
+`MultitouchSupport.framework` — the same approach BetterTouchTool and
+similar tools use, since AppKit's public gesture API has no concept of
+finger count and can't detect taps at all. The C declarations live in
+`Sources/CMultitouchSupport` (see the file for the struct-layout caveat);
+`MultitouchGestureEngine` wraps the raw callback, and `GestureRecognizer`
+turns a stream of touch frames into gesture events — the latter is pure
+logic with no framework dependency, so it's covered by
+`GestureRecognizerTests` using synthetic frames (finger-count gestures
+can't be exercised any other way without a real trackpad and a real
+finger).
+
+Pinch and rotate stay on AppKit's public `NSEvent` `.magnify`/`.rotate`
+monitors — they're inherently two-finger gestures already, so computing
+scale/angle from raw touches ourselves wouldn't add anything.
+
+Real touch data is noisy in two ways `GestureRecognizer` specifically
+accounts for: fingers don't all land in the same callback frame (landing
+staggered by a few ms), so it rebases its movement baseline every time
+the finger count changes rather than measuring "travel" across a
+count change; and a gesture can transiently report zero touching
+fingers for a frame even mid-swipe, bridged over by a short
+noise-tolerance grace period rather than treated as lift-off.
+
+**Gesture Sensitivity**: the slider in Preferences → Trackpad scales how
+much travel a swipe needs and how much wobble a tap tolerates
+(`GestureRecognizer.sensitivity`, 0...1, applied live via
+`SettingsStore.gestureSensitivity`). Defaults to the middle, which is
+also what `GestureRecognizerTests` assumes.
+
+**Troubleshooting**: flip `GestureRecognizer.debugLoggingEnabled` to
+`true` to get an NSLog line for every gesture start/recognize/end,
+including *why* a gesture didn't match (finger count, duration,
+movement) — useful for tuning thresholds or diagnosing "sometimes
+works" reports. Note that `log show`/`log stream` don't reliably surface
+this app's own NSLog output when it's launched normally (via Finder/
+`open`) even though the code runs — run the binary directly from a
+terminal (`dist/InputCustomizer.app/Contents/MacOS/InputCustomizer`) for
+NSLog output you can actually see.
+
+**Accepted trade-off:** MultitouchSupport.framework has no official
+headers and can change or disappear on any macOS update without notice.
+If trackpad rules stop firing after an OS update, check Console.app for
+an `NSLog` from `MultitouchGestureEngine` about `MTDeviceCreateDefault`
+failing — that's the framework having moved out from under us. Swipe/tap
+directions were implemented from the documented touch-state semantics
+and verified on this developer's Mac; if a direction feels inverted on
+yours, it's a one-line fix in `GestureRecognizer.swipeKind`.
 
 ## Known gaps / TODO
 
-- **Code signing / notarization**: `export-app.sh` will sign with a
-  Developer ID Application identity if one is installed, otherwise
-  it falls back to ad-hoc signing (fine for running on your own Mac,
-  not for distributing the `.app` to someone else). Notarization for
-  distribution outside your own machine isn't set up.
+- **Code signing / notarization**: `export-app.sh` signs with, in order,
+  a Developer ID Application identity, a free "Apple Development"
+  identity, or a local self-signed identity it creates once and reuses
+  (`InputCustomizer Local Dev`) — any of these keeps Accessibility/Input
+  Monitoring grants stable across rebuilds, unlike ad-hoc signing, which
+  invalidates them on every single build. None of this is sufficient for
+  distributing the `.app` to someone else — that needs a real Developer
+  ID identity and notarization, which isn't set up.
 - **Mouse rule modifiers**: mouse button rules don't yet have a modifier
   picker in `AddRuleView` (always `modifiers: 0`) — the model and
   matching logic already support them, just no UI control for it.

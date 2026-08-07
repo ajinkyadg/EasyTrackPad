@@ -23,13 +23,57 @@ cp "$EXECUTABLE_PATH" "$MACOS_DIR/$APP_NAME"
 cp "$INFO_PLIST_PATH" "$CONTENTS_DIR/Info.plist"
 chmod 755 "$MACOS_DIR/$APP_NAME"
 
+LOCAL_IDENTITY_NAME="InputCustomizer Local Dev"
+
+# A *stable* signing identity matters here — not just a valid one. macOS
+# ties TCC grants (Accessibility, Input Monitoring) to the code signature;
+# ad-hoc signing ("-") hashes the binary's own contents, so it produces a
+# *different* identity on every rebuild and silently invalidates the
+# Accessibility grant each time you iterate. Any real identity (Developer
+# ID, or a free "Apple Development" cert from an Xcode account — Xcode
+# often provisions one automatically) is stable across rebuilds; ad-hoc
+# is the only one that isn't.
 SIGN_IDENTITY="${INPUTCUSTOMIZER_SIGN_IDENTITY:-}"
 if [[ -z "$SIGN_IDENTITY" ]] && command -v security >/dev/null 2>&1; then
     SIGN_IDENTITY="$(security find-identity -v -p codesigning | awk -F '"' '/Developer ID Application/ { print $2; exit }')"
 fi
+if [[ -z "$SIGN_IDENTITY" ]] && command -v security >/dev/null 2>&1; then
+    SIGN_IDENTITY="$(security find-identity -v -p codesigning | awk -F '"' '/Apple Development/ { print $2; exit }')"
+fi
+
+# Last resort: create a local self-signed identity. Only reached if
+# there's no Developer ID or Apple Development certificate available.
+# codesign will happily sign with it by name even though it's untrusted
+# (`security find-identity -v` excludes it, so we check for its
+# *existence* via find-certificate instead — using -v here would look
+# like "no identity" forever and re-create a duplicate on every run).
+if [[ -z "$SIGN_IDENTITY" && "${INPUTCUSTOMIZER_REQUIRE_DEVELOPER_ID:-0}" != "1" ]] && command -v security >/dev/null 2>&1; then
+    if ! security find-certificate -c "$LOCAL_IDENTITY_NAME" "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1; then
+        printf 'No signing identity found — creating a local self-signed one ("%s") so Accessibility/Input Monitoring grants survive rebuilds...\n' "$LOCAL_IDENTITY_NAME"
+        TMP_CERT_DIR="$(mktemp -d)"
+        openssl req -x509 -newkey rsa:2048 -keyout "$TMP_CERT_DIR/key.pem" -out "$TMP_CERT_DIR/cert.pem" \
+            -days 3650 -nodes -subj "/CN=$LOCAL_IDENTITY_NAME" \
+            -addext "basicConstraints=critical,CA:FALSE" \
+            -addext "keyUsage=critical,digitalSignature" \
+            -addext "extendedKeyUsage=critical,codeSigning" >/dev/null 2>&1
+        openssl pkcs12 -export -out "$TMP_CERT_DIR/cert.p12" \
+            -inkey "$TMP_CERT_DIR/key.pem" -in "$TMP_CERT_DIR/cert.pem" \
+            -passout pass:inputcustomizer
+        security import "$TMP_CERT_DIR/cert.p12" -k "$HOME/Library/Keychains/login.keychain-db" \
+            -P inputcustomizer -T /usr/bin/codesign -A
+        rm -rf "$TMP_CERT_DIR"
+    fi
+    SIGN_IDENTITY="$LOCAL_IDENTITY_NAME"
+fi
 
 if command -v codesign >/dev/null 2>&1; then
-    if [[ -n "$SIGN_IDENTITY" ]]; then
+    if [[ "$SIGN_IDENTITY" == "$LOCAL_IDENTITY_NAME" ]]; then
+        # Apple's timestamp authority only recognizes Apple-issued
+        # certificates; requesting one for this self-signed identity
+        # would just fail, so skip it.
+        codesign --force --deep --sign "$SIGN_IDENTITY" --options runtime --timestamp=none "$APP_PATH"
+        printf 'Signed with local dev identity: %s\n' "$SIGN_IDENTITY"
+    elif [[ -n "$SIGN_IDENTITY" ]]; then
         codesign --force --deep --sign "$SIGN_IDENTITY" --options runtime --timestamp "$APP_PATH"
         printf 'Signed with %s\n' "$SIGN_IDENTITY"
     elif [[ "${INPUTCUSTOMIZER_REQUIRE_DEVELOPER_ID:-0}" == "1" ]]; then
@@ -38,7 +82,7 @@ if command -v codesign >/dev/null 2>&1; then
         exit 1
     else
         codesign --force --deep --sign - --options runtime "$APP_PATH"
-        printf 'Signed ad-hoc because no Developer ID Application identity was found.\n'
+        printf 'Signed ad-hoc — no stable signing identity available. Accessibility/Input Monitoring grants will need to be re-approved after every rebuild.\n'
     fi
 fi
 
