@@ -5,11 +5,13 @@ import CoreGraphics
 /// buttons on gaming/productivity mice) system-wide via a CGEventTap.
 final class MouseManager {
     private let settingsStore: SettingsStore
+    private let activityLog: ActivityLog
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
-    init(settingsStore: SettingsStore) {
+    init(settingsStore: SettingsStore, activityLog: ActivityLog) {
         self.settingsStore = settingsStore
+        self.activityLog = activityLog
     }
 
     func start() {
@@ -50,12 +52,15 @@ final class MouseManager {
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         let buttonNumber = Int(event.getIntegerValueField(.mouseEventButtonNumber))
         let modifiers = UInt(event.flags.rawValue) & relevantModifierMask
+        let currentApp = ActiveApp.frontmostBundleIdentifier
 
         for rule in settingsStore.rules(for: .mouse) {
             guard case let .mouseButton(ruleButton, ruleModifiers) = rule.trigger,
                   ruleButton == buttonNumber,
-                  UInt(ruleModifiers) == modifiers else { continue }
+                  UInt(ruleModifiers) == modifiers,
+                  rule.applies(whileFrontmostAppIs: currentApp) else { continue }
 
+            activityLog.log(.fired, "Button \(buttonNumber) → \(rule.action.shortDescription)")
             apply(action: rule.action)
             return Unmanaged.passRetained(event) // consumed; swap for `nil` to also pass through
         }
@@ -67,6 +72,7 @@ final class MouseManager {
     }
 
     private func apply(action: Action) {
+        activityLog.log(.executing, action.shortDescription)
         switch action {
         case let .runShellCommand(command):
             ActionRunner.run(command: command)

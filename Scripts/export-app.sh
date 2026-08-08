@@ -87,4 +87,23 @@ if command -v codesign >/dev/null 2>&1; then
 fi
 
 printf 'Exported %s\n' "$APP_PATH"
-printf 'Move it to /Applications, launch it, then grant Accessibility and Input Monitoring permissions when macOS prompts.\n'
+
+# Auto-install to /Applications (or INPUTCUSTOMIZER_INSTALL_DIR) so
+# however you normally launch the app — Spotlight, Launchpad, double-
+# clicking in Finder — picks up this build. Without this, `dist/` and
+# `/Applications` silently diverge the moment anyone copies the app
+# there once (as this project's own README used to suggest doing
+# manually), and "I changed the code but the app looks the same" is
+# very hard to diagnose from the symptom alone.
+if [[ "${INPUTCUSTOMIZER_SKIP_INSTALL:-0}" != "1" ]]; then
+    INSTALL_DIR="${INPUTCUSTOMIZER_INSTALL_DIR:-/Applications}"
+    INSTALLED_APP_PATH="$INSTALL_DIR/$APP_NAME.app"
+    pkill -f "$INSTALLED_APP_PATH/Contents/MacOS/$APP_NAME" >/dev/null 2>&1 || true
+    rm -rf "$INSTALLED_APP_PATH"
+    mkdir -p "$INSTALL_DIR"
+    cp -R "$APP_PATH" "$INSTALLED_APP_PATH"
+    printf 'Installed to %s — launch it from Spotlight/Applications, or `open "%s"`.\n' "$INSTALLED_APP_PATH" "$INSTALLED_APP_PATH"
+    printf 'Grant Accessibility and Input Monitoring when macOS prompts (only needed once, thanks to the stable signing identity above).\n'
+else
+    printf 'Skipped installing to /Applications (INPUTCUSTOMIZER_SKIP_INSTALL=1) — exported build only at %s\n' "$APP_PATH"
+fi

@@ -7,11 +7,13 @@ import CoreGraphics
 /// main thread.
 final class KeyboardManager {
     private let settingsStore: SettingsStore
+    private let activityLog: ActivityLog
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
-    init(settingsStore: SettingsStore) {
+    init(settingsStore: SettingsStore, activityLog: ActivityLog) {
         self.settingsStore = settingsStore
+        self.activityLog = activityLog
     }
 
     func start() {
@@ -52,12 +54,19 @@ final class KeyboardManager {
     private func handle(event: CGEvent) -> Unmanaged<CGEvent>? {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let modifiers = event.flags.rawValue
+        let currentApp = ActiveApp.frontmostBundleIdentifier
 
+        // Only ever logs on an actual match, never per keystroke — this
+        // tap sees every key-down system-wide, and logging all of them
+        // (matched or not) would both flood the console and leak
+        // unrelated keystrokes into it.
         for rule in settingsStore.rules(for: .keyboard) {
             guard case let .keyCombo(ruleKeyCode, ruleModifiers) = rule.trigger,
                   ruleKeyCode == keyCode,
-                  UInt64(ruleModifiers) == modifiers & relevantModifierMask else { continue }
+                  UInt64(ruleModifiers) == modifiers & relevantModifierMask,
+                  rule.applies(whileFrontmostAppIs: currentApp) else { continue }
 
+            activityLog.log(.fired, "\(KeyCodeMap.describe(keyCode: keyCode, modifiers: UInt(modifiers & relevantModifierMask))) → \(rule.action.shortDescription)")
             apply(action: rule.action, to: event)
             return Unmanaged.passRetained(event)
         }
@@ -69,6 +78,7 @@ final class KeyboardManager {
     }
 
     private func apply(action: Action, to event: CGEvent) {
+        activityLog.log(.executing, action.shortDescription)
         switch action {
         case let .remapToKey(keyCode, modifiers):
             event.setIntegerValueField(.keyboardEventKeycode, value: Int64(keyCode))

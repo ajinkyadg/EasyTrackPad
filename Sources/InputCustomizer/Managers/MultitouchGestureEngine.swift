@@ -36,10 +36,19 @@ final class MultitouchGestureEngine {
 
     private var device: MTDeviceRef?
 
-    func start() {
+    /// Returns whether a multitouch device was actually found and started —
+    /// `false` means the private MultitouchSupport.framework has changed
+    /// or disappeared on this macOS version (an accepted, real risk of
+    /// depending on it; see README). Callers use this to degrade
+    /// gracefully: finger-count swipe/tap detection needs this, but
+    /// pinch/rotate (public `NSEvent` monitors) and keyboard/mouse
+    /// remapping (public `CGEventTap`) don't depend on this at all and
+    /// keep working regardless.
+    @discardableResult
+    func start() -> Bool {
         guard let device = MTDeviceCreateDefault() else {
-            NSLog("InputCustomizer: MTDeviceCreateDefault() returned nil — no multitouch device found, or MultitouchSupport.framework is unavailable on this macOS version. Trackpad gestures will not fire.")
-            return
+            NSLog("InputCustomizer: MTDeviceCreateDefault() returned nil — no multitouch device found, or MultitouchSupport.framework is unavailable on this macOS version. Trackpad swipe/tap gestures will not fire; pinch, rotate, mouse, and keyboard rules are unaffected.")
+            return false
         }
         NSLog("InputCustomizer: multitouch device created, starting callback registration")
         self.device = device
@@ -63,6 +72,7 @@ final class MultitouchGestureEngine {
         }
         MTDeviceStart(device, 0)
         NSLog("InputCustomizer: MTDeviceStart called")
+        return true
     }
 
     func stop() {

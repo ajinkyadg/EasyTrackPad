@@ -1,13 +1,41 @@
 import Foundation
 import Combine
 
-/// Single source of truth for all rules. Persists to a JSON file in
-/// Application Support so rules survive app restarts and are easy to
-/// back up, diff, or hand-edit — deliberately not using a database,
-/// to keep this hackable and simple to debug.
+/// Single source of truth for all profiles/rules. Persists to a JSON file
+/// in Application Support so rules survive app restarts and are easy to
+/// back up, diff, or hand-edit — deliberately not using a database, to
+/// keep this hackable and simple to debug.
 final class SettingsStore: ObservableObject {
-    @Published var rules: [CustomizationRule] = [] {
-        didSet { save() }
+    /// All profiles, each a self-contained named set of rules. Always has
+    /// at least one — `deleteProfile` refuses to remove the last one, and
+    /// `load()` never leaves this empty even on a decode failure.
+    @Published var profiles: [Profile] = [Profile(name: "Default")] {
+        didSet {
+            save()
+            recomputeActiveProfile()
+        }
+    }
+    /// The user's manual/durable choice of profile — what `RuleListView`
+    /// edits, and what matching falls back to when no profile's
+    /// `autoActivateApps` claims the current frontmost app. Persisted.
+    @Published var selectedProfileID = UUID() {
+        didSet {
+            save()
+            recomputeActiveProfile()
+        }
+    }
+    /// The profile actually consulted by `rules(for:)` right now — equal
+    /// to `selectedProfileID` unless a profile's `autoActivateApps`
+    /// claims the current frontmost app, in which case that profile
+    /// *temporarily* overrides the manual selection without changing it
+    /// (see `Profile.resolveActiveProfile`). Deliberately NOT persisted —
+    /// recomputed live from `profiles` + `selectedProfileID` + the
+    /// current frontmost app, never written to disk.
+    @Published private(set) var activeProfileID = UUID()
+    private var lastFrontmostBundleIdentifier: String?
+
+    var selectedProfile: Profile? {
+        profiles.first(where: { $0.id == selectedProfileID })
     }
 
     /// When true, every manager skips rule matching entirely — a quick
@@ -23,6 +51,40 @@ final class SettingsStore: ObservableObject {
         return defaults.object(forKey: "gestureSensitivity") != nil ? defaults.double(forKey: "gestureSensitivity") : 0.5
     }() {
         didSet { UserDefaults.standard.set(gestureSensitivity, forKey: "gestureSensitivity") }
+    }
+
+    /// Seconds between re-applications of a "repeat while held" swipe
+    /// rule's action (see `CustomizationRule.repeatsWhileHeld`). Lower is
+    /// faster/more responsive but fires the action more often; 0.35 is
+    /// the original fixed value this replaces.
+    @Published var repeatWhileHeldInterval: Double = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: "repeatWhileHeldInterval") != nil ? defaults.double(forKey: "repeatWhileHeldInterval") : 0.35
+    }() {
+        didSet { UserDefaults.standard.set(repeatWhileHeldInterval, forKey: "repeatWhileHeldInterval") }
+    }
+
+    /// Seconds to wait after a "repeat while held" swipe first fires
+    /// before repeating actually begins — mirrors macOS's own "Delay
+    /// Until Repeat" keyboard setting, paired with
+    /// `repeatWhileHeldInterval` as the "Key Repeat" rate equivalent.
+    /// 0 means repeating starts as soon as the interval above elapses,
+    /// with no extra pause.
+    @Published var repeatWhileHeldDelay: Double = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: "repeatWhileHeldDelay") != nil ? defaults.double(forKey: "repeatWhileHeldDelay") : 0.3
+    }() {
+        didSet { UserDefaults.standard.set(repeatWhileHeldDelay, forKey: "repeatWhileHeldDelay") }
+    }
+
+    /// 0...1 — how much travel counts as "one more repeat" for a rule
+    /// with `repeatsByDistance` on. See `GestureRecognizer.distancePerTick`
+    /// for what it actually tunes.
+    @Published var repeatByDistanceSensitivity: Double = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: "repeatByDistanceSensitivity") != nil ? defaults.double(forKey: "repeatByDistanceSensitivity") : 0.5
+    }() {
+        didSet { UserDefaults.standard.set(repeatByDistanceSensitivity, forKey: "repeatByDistanceSensitivity") }
     }
 
     private let fileURL: URL
@@ -41,26 +103,181 @@ final class SettingsStore: ObservableObject {
         load()
     }
 
+    // MARK: - Rules (operate on the selected profile — what's being edited)
+
     func addRule(_ rule: CustomizationRule) {
-        rules.append(rule)
+        mutateSelectedProfile { $0.rules.append(rule) }
     }
 
     func removeRule(id: UUID) {
-        rules.removeAll { $0.id == id }
+        mutateSelectedProfile { profile in profile.rules.removeAll { $0.id == id } }
     }
 
+    /// Replaces the rule matching `rule.id` in place, preserving its
+    /// position. A no-op if no rule with that id exists — deliberately,
+    /// since presets are added via `addRule` and must never be routed
+    /// through here with a stale/absent id.
+    func updateRule(_ rule: CustomizationRule) {
+        mutateSelectedProfile { profile in
+            guard let index = profile.rules.firstIndex(where: { $0.id == rule.id }) else { return }
+            profile.rules[index] = rule
+        }
+    }
+
+    private func mutateSelectedProfile(_ mutate: (inout Profile) -> Void) {
+        guard let index = profiles.firstIndex(where: { $0.id == selectedProfileID }) else { return }
+        mutate(&profiles[index])
+    }
+
+    /// What the managers actually match against — the *active* profile's
+    /// rules (which can differ from the selected/edited one while an
+    /// app-triggered auto-activation is live), filtered to this device
+    /// and enabled. Empty while paused.
     func rules(for device: InputDevice) -> [CustomizationRule] {
-        guard !isPaused else { return [] }
-        return rules.filter { $0.device == device && $0.isEnabled }
+        guard !isPaused, let active = profiles.first(where: { $0.id == activeProfileID }) else { return [] }
+        return active.rules.filter { $0.device == device && $0.isEnabled }
     }
 
+    // MARK: - Profiles
+
+    @discardableResult
+    func addProfile(name: String) -> Profile {
+        let profile = Profile(name: uniqueName(base: name, existing: profiles.map(\.name)))
+        profiles.append(profile)
+        return profile
+    }
+
+    func renameProfile(id: UUID, name: String) {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        let otherNames = profiles.enumerated().filter { $0.offset != index }.map { $0.element.name }
+        profiles[index].name = uniqueName(base: name, existing: otherNames)
+    }
+
+    /// No-op if `id` is the last remaining profile — there must always be
+    /// at least one to select/edit/match against.
+    func deleteProfile(id: UUID) {
+        guard profiles.count > 1, let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        profiles.remove(at: index)
+        if selectedProfileID == id {
+            selectedProfileID = profiles[0].id
+        }
+    }
+
+    /// Fresh identities throughout (never shares a rule/profile id with
+    /// the original), and deliberately does NOT copy `autoActivateApps`
+    /// — a duplicate shouldn't silently steal the original's
+    /// auto-activation claim out from under it.
+    func duplicateProfile(id: UUID) {
+        guard let original = profiles.first(where: { $0.id == id }) else { return }
+        var copy = original.freshCopyWithNewIdentities()
+        copy.name = uniqueName(base: original.name, existing: profiles.map(\.name))
+        copy.autoActivateApps = []
+        profiles.append(copy)
+    }
+
+    func selectProfile(id: UUID) {
+        guard profiles.contains(where: { $0.id == id }) else { return }
+        selectedProfileID = id
+    }
+
+    /// An app can only ever auto-activate one profile — assigning it here
+    /// strips it from every other profile first, so the invariant holds
+    /// by construction rather than being an undefined conflict.
+    func assignAutoActivateApp(_ app: AppReference, toProfile targetID: UUID) {
+        for index in profiles.indices {
+            profiles[index].autoActivateApps.removeAll { $0.bundleIdentifier == app.bundleIdentifier }
+        }
+        guard let index = profiles.firstIndex(where: { $0.id == targetID }) else { return }
+        profiles[index].autoActivateApps.append(app)
+    }
+
+    func removeAutoActivateApp(_ app: AppReference, fromProfile id: UUID) {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        profiles[index].autoActivateApps.removeAll { $0.bundleIdentifier == app.bundleIdentifier }
+    }
+
+    /// Imports a profile (e.g. from `ProfileExportFile`) — always mints
+    /// fresh ids (never trusts ids from an external file, even a
+    /// self-exported one) and disambiguates a colliding name. Preserves
+    /// the imported profile's `autoActivateApps`, but the exclusivity
+    /// invariant still holds: those apps are stripped from whichever
+    /// local profile currently claims them.
+    func importProfile(_ profile: Profile) {
+        var fresh = profile.freshCopyWithNewIdentities()
+        fresh.name = uniqueName(base: fresh.name, existing: profiles.map(\.name))
+        let claimedApps = Set(fresh.autoActivateApps.map(\.bundleIdentifier))
+        for index in profiles.indices {
+            profiles[index].autoActivateApps.removeAll { claimedApps.contains($0.bundleIdentifier) }
+        }
+        profiles.append(fresh)
+    }
+
+    /// Called whenever the frontmost app changes (see `FrontmostAppObserver`)
+    /// — recomputes `activeProfileID`, which may temporarily diverge from
+    /// `selectedProfileID` if the new frontmost app is claimed by some
+    /// profile's `autoActivateApps`.
+    func updateFrontmostApp(_ bundleIdentifier: String?) {
+        lastFrontmostBundleIdentifier = bundleIdentifier
+        recomputeActiveProfile()
+    }
+
+    private func recomputeActiveProfile() {
+        activeProfileID = Profile.resolveActiveProfile(
+            profiles: profiles,
+            selectedProfileID: selectedProfileID,
+            frontmostBundleIdentifier: lastFrontmostBundleIdentifier
+        )
+    }
+
+    // MARK: - Persistence
+
+    /// Three-way cascade: the current `PersistedState` shape (the
+    /// steady-state path for every launch after the first post-profiles
+    /// one); a legacy bare `[CustomizationRule]` array (what every
+    /// pre-profiles user's file actually is — wrapped into one "Default"
+    /// profile and immediately re-saved in the new shape, so this branch
+    /// can never run twice for the same file); or neither decodes
+    /// (genuinely corrupt — backed up loudly instead of discarded,
+    /// same discipline this file already had pre-profiles).
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL) else { return }
-        rules = (try? JSONDecoder().decode([CustomizationRule].self, from: data)) ?? []
+        guard let data = try? Data(contentsOf: fileURL) else {
+            // No file yet (fresh install): keep the single default
+            // profile, but make sure selectedProfileID actually points
+            // at it instead of the unrelated placeholder UUID it was
+            // declared with.
+            selectedProfileID = profiles[0].id
+            return
+        }
+
+        if let state = try? JSONDecoder().decode(PersistedState.self, from: data) {
+            profiles = state.profiles.isEmpty ? [Profile(name: "Default")] : state.profiles
+            selectedProfileID = profiles.contains(where: { $0.id == state.selectedProfileID }) ? state.selectedProfileID : profiles[0].id
+            return
+        }
+
+        if let legacyRules = try? JSONDecoder().decode([CustomizationRule].self, from: data) {
+            NSLog("InputCustomizer: migrating pre-profiles \(fileURL.lastPathComponent) (\(legacyRules.count) rule(s)) into a \"Default\" profile")
+            let backupURL = fileURL.appendingPathExtension("pre-profiles.bak")
+            try? FileManager.default.removeItem(at: backupURL)
+            try? FileManager.default.copyItem(at: fileURL, to: backupURL)
+            let defaultProfile = Profile(name: "Default", rules: legacyRules)
+            profiles = [defaultProfile]
+            selectedProfileID = defaultProfile.id
+            save() // rewrite in the new format now, so this branch never runs again for this file
+            return
+        }
+
+        NSLog("InputCustomizer: failed to decode \(fileURL.lastPathComponent) in either the current or legacy format, backing it up instead of discarding it")
+        let backupURL = fileURL.appendingPathExtension("bak")
+        try? FileManager.default.removeItem(at: backupURL)
+        try? FileManager.default.copyItem(at: fileURL, to: backupURL)
+        profiles = [Profile(name: "Default")]
+        selectedProfileID = profiles[0].id
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(rules) else { return }
+        let state = PersistedState(profiles: profiles, selectedProfileID: selectedProfileID)
+        guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: fileURL, options: .atomic)
     }
 }

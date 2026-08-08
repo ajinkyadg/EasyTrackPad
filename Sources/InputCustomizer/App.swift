@@ -24,21 +24,32 @@ struct InputCustomizerApp: App {
 /// "accessory" app (no Dock icon) with just a status bar item, like BTT.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let settingsStore = SettingsStore()
+    let touchVisualizerModel = TouchVisualizerModel()
+    let activityLog = ActivityLog()
     private var statusItem: NSStatusItem?
     private var preferencesWindow: NSWindow?
     private var pauseMenuItem: NSMenuItem?
     private var launchAtLoginMenuItem: NSMenuItem?
+    private var profileSwitchMenuItem: NSMenuItem?
     private var cancellables: Set<AnyCancellable> = []
+    private let frontmostAppObserver = FrontmostAppObserver()
 
-    private lazy var keyboardManager = KeyboardManager(settingsStore: settingsStore)
-    private lazy var mouseManager = MouseManager(settingsStore: settingsStore)
-    private lazy var trackpadManager = TrackpadManager(settingsStore: settingsStore)
+    private lazy var keyboardManager = KeyboardManager(settingsStore: settingsStore, activityLog: activityLog)
+    private lazy var mouseManager = MouseManager(settingsStore: settingsStore, activityLog: activityLog)
+    private lazy var trackpadManager = TrackpadManager(settingsStore: settingsStore, visualizerModel: touchVisualizerModel, activityLog: activityLog)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
         observePauseState()
+        observeProfiles()
+        // Doesn't need Accessibility — plain NSWorkspace notifications —
+        // so this starts independent of checkPermissionsAndStart() below.
+        frontmostAppObserver.start { [weak self] bundleIdentifier in
+            self?.settingsStore.updateFrontmostApp(bundleIdentifier)
+        }
         checkPermissionsAndStart()
+        GestureGlyphRenderer.prewarm()
     }
 
     private func setupStatusItem() {
@@ -47,6 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Preferences…", action: #selector(openPreferences), keyEquivalent: ","))
+        menu.addItem(NSMenuItem.separator())
+
+        let profileItem = NSMenuItem(title: "Switch Profile", action: nil, keyEquivalent: "")
+        let profileSubmenu = NSMenu()
+        profileItem.submenu = profileSubmenu
+        menu.addItem(profileItem)
+        profileSwitchMenuItem = profileItem
         menu.addItem(NSMenuItem.separator())
 
         let pauseItem = NSMenuItem(title: "Pause All Rules", action: #selector(togglePause), keyEquivalent: "")
@@ -85,6 +103,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsStore.isPaused.toggle()
     }
 
+    /// Rebuilds the "Switch Profile" submenu whenever the profile list or
+    /// manual selection changes (renamed/added/deleted profiles, or
+    /// picking a different one), and logs *actual* active-profile
+    /// transitions to `ActivityLog` — `removeDuplicates()` matters here
+    /// since `activeProfileID` gets reassigned (to the same value) on
+    /// every unrelated profile edit, not just real switches.
+    private func observeProfiles() {
+        settingsStore.$profiles
+            .sink { [weak self] _ in self?.rebuildProfileSubmenu() }
+            .store(in: &cancellables)
+        settingsStore.$selectedProfileID
+            .sink { [weak self] _ in self?.rebuildProfileSubmenu() }
+            .store(in: &cancellables)
+        settingsStore.$activeProfileID
+            .removeDuplicates()
+            .sink { [weak self] activeID in
+                guard let self, let profile = self.settingsStore.profiles.first(where: { $0.id == activeID }) else { return }
+                self.activityLog.log(.info, "Active profile: \(profile.name)")
+            }
+            .store(in: &cancellables)
+    }
+
+    private func rebuildProfileSubmenu() {
+        guard let submenu = profileSwitchMenuItem?.submenu else { return }
+        submenu.removeAllItems()
+        for profile in settingsStore.profiles {
+            let item = NSMenuItem(title: profile.name, action: #selector(selectProfileFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = profile.id
+            item.state = profile.id == settingsStore.selectedProfileID ? .on : .off
+            submenu.addItem(item)
+        }
+    }
+
+    @objc private func selectProfileFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        settingsStore.selectProfile(id: id)
+    }
+
     @objc private func toggleLaunchAtLogin() {
         do {
             if SMAppService.mainApp.status == .enabled {
@@ -102,16 +159,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         if preferencesWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
-                styleMask: [.titled, .closable, .miniaturizable],
+                contentRect: NSRect(x: 0, y: 0, width: 960, height: 600),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
             window.title = "InputCustomizer Preferences"
             window.contentView = NSHostingView(
-                rootView: SettingsView().environmentObject(settingsStore)
+                rootView: SettingsView()
+                    .environmentObject(settingsStore)
+                    .environmentObject(touchVisualizerModel)
+                    .environmentObject(activityLog)
             )
             window.isReleasedWhenClosed = false // keep our reference valid after the user closes it
+            // NOT setting .fullScreenPrimary here: combined with this
+            // window presenting sheets (Add/Edit Rule), it caused a
+            // persistent, reproducible chrome glitch — the sheet
+            // appearing detached/overlapping the parent's title bar
+            // instead of properly docked under it. .resizable alone (for
+            // the green button's plain zoom, and for manual drag-resize)
+            // doesn't have that problem.
             window.center()
             preferencesWindow = window
         }
