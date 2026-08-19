@@ -1,4 +1,6 @@
 import SwiftUI
+import GestureEngine
+import InputModels
 
 /// Live trackpad-touch + recognized-gesture preview, embedded in
 /// `RuleFormView`'s gesture picker so you can see (and try) what you're
@@ -24,11 +26,21 @@ import SwiftUI
 struct TouchVisualizerView: View {
     @EnvironmentObject var visualizerModel: TouchVisualizerModel
     @Binding var selectedGesture: Trigger.GestureKind
+    /// Which device this sheet is editing rules for — both the trackpad
+    /// and a Magic Mouse are read simultaneously (see `TrackpadManager`'s
+    /// doc comment), so this only picks which one's live touches this
+    /// preview box shows, via `visualizerModel.previewDevice`.
+    let device: InputDevice
 
     private static let touchingStates: Set<Int32> = [3, 4]
     private static let cardHeight: CGFloat = 200
     private static let surfaceWidth: CGFloat = 170
     private static let infoWidth: CGFloat = 176
+
+    /// Whether this sheet's device actually has a working multitouch
+    /// connection at all — if not, there's no live data to show here
+    /// regardless of which device is being previewed.
+    private var isDeviceAvailable: Bool { visualizerModel.isMultitouchAvailable(for: device) }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -43,32 +55,41 @@ struct TouchVisualizerView: View {
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.25)))
         .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
-        .onAppear { visualizerModel.activate() }
+        .onAppear {
+            visualizerModel.previewDevice = device
+            visualizerModel.activate()
+        }
         .onDisappear { visualizerModel.deactivate() }
     }
 
     private var touchSurface: some View {
         GeometryReader { geometry in
             ZStack {
-                // Static colorful preview of whatever the picker is
-                // currently set to, filling the box while nothing is
-                // actually touching — replaced by real touch dots the
-                // instant a finger lands.
-                if touchingTouches.isEmpty {
-                    GesturePreviewGraphic(kind: selectedGesture)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
+                if !isDeviceAvailable {
+                    unavailableDeviceOverlay
+                } else if touchingTouches.isEmpty {
+                    // Static preview of whatever the picker is currently
+                    // set to, filling the box while nothing is actually
+                    // touching — replaced by real touch dots the instant
+                    // a finger lands. Same glyph language as the small
+                    // icons elsewhere in the app (just scaled up), rather
+                    // than a separate illustration style, so this box and
+                    // the rule list read as the same visual system.
+                    GestureIconView(kind: selectedGesture, height: min(geometry.size.width, geometry.size.height) * 0.7)
                 }
 
-                ForEach(touchingTouches, id: \.id) { touch in
-                    TouchDotView()
-                        .position(
-                            x: CGFloat(touch.position.x) * geometry.size.width,
-                            // Normalized touch y grows upward (matches
-                            // GestureRecognizer's "dy > 0 == up"
-                            // convention); SwiftUI's y grows downward.
-                            y: (1 - CGFloat(touch.position.y)) * geometry.size.height
-                        )
-                        .transition(.scale(scale: 0.3).combined(with: .opacity))
+                if isDeviceAvailable {
+                    ForEach(touchingTouches, id: \.id) { touch in
+                        TouchDotView()
+                            .position(
+                                x: CGFloat(touch.position.x) * geometry.size.width,
+                                // Normalized touch y grows upward (matches
+                                // GestureRecognizer's "dy > 0 == up"
+                                // convention); SwiftUI's y grows downward.
+                                y: (1 - CGFloat(touch.position.y)) * geometry.size.height
+                            )
+                            .transition(.scale(scale: 0.3).combined(with: .opacity))
+                    }
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -85,6 +106,23 @@ struct TouchVisualizerView: View {
             // continuous motion, so it's safe to animate.
             .animation(.spring(response: 0.22, dampingFraction: 0.7), value: touchingTouches.map(\.id))
         }
+    }
+
+    /// Shown instead of live touches when this sheet's own device has no
+    /// working multitouch connection — e.g. no Magic Mouse is currently
+    /// paired/connected, or the private MultitouchSupport framework
+    /// failed to start for it on this macOS version.
+    private var unavailableDeviceOverlay: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "cursorarrow.slash")
+                .font(.system(size: 22))
+                .foregroundStyle(.tertiary)
+            Text("No \(device.displayName.lowercased()) detected")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
     }
 
     private var infoPanel: some View {
@@ -161,8 +199,9 @@ struct TouchVisualizerView: View {
     }
 
     private var statusText: String {
+        guard isDeviceAvailable else { return "No \(device.displayName.lowercased()) detected." }
         let count = touchingTouches.count
-        guard count > 0 else { return "Touch the trackpad to try a gesture." }
+        guard count > 0 else { return "Touch the \(device.displayName.lowercased()) to try a gesture." }
         return "\(count) finger\(count == 1 ? "" : "s") down — perform a gesture."
     }
 }

@@ -6,10 +6,10 @@ import Foundation
 /// `Profile` value, and so an inactive profile's rules are never even
 /// touched by the managers' per-event matching code (see
 /// `SettingsStore.rules(for:)`).
-struct Profile: Identifiable, Codable, Hashable {
-    var id = UUID()
-    var name: String
-    var rules: [CustomizationRule] = []
+public struct Profile: Identifiable, Codable, Hashable {
+    public var id = UUID()
+    public var name: String
+    public var rules: [CustomizationRule] = []
     /// Apps that, when frontmost, temporarily make this profile the
     /// effective active one regardless of the manually selected profile
     /// — reverts the instant the app is no longer frontmost. Empty means
@@ -17,7 +17,14 @@ struct Profile: Identifiable, Codable, Hashable {
     /// can only be claimed by one profile at a time — enforced by
     /// `SettingsStore.assignAutoActivateApp(_:toProfile:)` at the point
     /// of assignment, not left as an undefined conflict.
-    var autoActivateApps: [AppReference] = []
+    public var autoActivateApps: [AppReference] = []
+
+    public init(id: UUID = UUID(), name: String, rules: [CustomizationRule] = [], autoActivateApps: [AppReference] = []) {
+        self.id = id
+        self.name = name
+        self.rules = rules
+        self.autoActivateApps = autoActivateApps
+    }
 
     /// Pure decision of which profile should actually be firing rules
     /// right now — no manual selection, since a frontmost-app match
@@ -25,7 +32,7 @@ struct Profile: Identifiable, Codable, Hashable {
     /// the first profile, if even that's stale/missing) otherwise.
     /// Testable without touching `NSWorkspace` — the real frontmost app
     /// is looked up once by the caller and passed in.
-    static func resolveActiveProfile(
+    public static func resolveActiveProfile(
         profiles: [Profile],
         selectedProfileID: UUID,
         frontmostBundleIdentifier: String?
@@ -47,7 +54,7 @@ struct Profile: Identifiable, Codable, Hashable {
     /// nested rule so they can never collide with an existing profile's
     /// identities (SwiftUI `List` diffing, `SettingsStore.updateRule`'s
     /// find-by-id lookup).
-    func freshCopyWithNewIdentities() -> Profile {
+    public func freshCopyWithNewIdentities() -> Profile {
         var copy = self
         copy.id = UUID()
         copy.rules = rules.map { rule in
@@ -62,7 +69,7 @@ struct Profile: Identifiable, Codable, Hashable {
 /// Disambiguates `base` against `existing` names by appending " 2", " 3",
 /// etc. until it's unique — used when importing a profile whose name
 /// collides with one already present.
-func uniqueName(base: String, existing: [String]) -> String {
+public func uniqueName(base: String, existing: [String]) -> String {
     guard existing.contains(base) else { return base }
     var suffix = 2
     while existing.contains("\(base) \(suffix)") {
@@ -75,10 +82,16 @@ func uniqueName(base: String, existing: [String]) -> String {
 /// the introduction of profiles. See `SettingsStore.load()` for the
 /// migration cascade that upgrades a pre-profiles file (a bare
 /// `[CustomizationRule]` array) into this shape exactly once.
-struct PersistedState: Codable {
-    var schemaVersion = 1
-    var profiles: [Profile]
-    var selectedProfileID: UUID
+public struct PersistedState: Codable {
+    public var schemaVersion = 1
+    public var profiles: [Profile]
+    public var selectedProfileID: UUID
+
+    public init(schemaVersion: Int = 1, profiles: [Profile], selectedProfileID: UUID) {
+        self.schemaVersion = schemaVersion
+        self.profiles = profiles
+        self.selectedProfileID = selectedProfileID
+    }
 }
 
 /// The shape of a `.json` file produced by exporting a single profile —
@@ -86,8 +99,14 @@ struct PersistedState: Codable {
 /// even though they'd overlap today, so the two can evolve independently
 /// (e.g. export gaining a "source app version" field later without that
 /// leaking into the main persisted state's schema).
-struct ProfileExportFile: Codable {
-    var schemaVersion = 1
-    var exportedAt = Date()
-    var profile: Profile
+public struct ProfileExportFile: Codable {
+    public var schemaVersion = 1
+    public var exportedAt = Date()
+    public var profile: Profile
+
+    public init(schemaVersion: Int = 1, exportedAt: Date = Date(), profile: Profile) {
+        self.schemaVersion = schemaVersion
+        self.exportedAt = exportedAt
+        self.profile = profile
+    }
 }

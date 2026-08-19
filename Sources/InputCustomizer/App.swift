@@ -1,6 +1,7 @@
 import SwiftUI
 import ServiceManagement
 import Combine
+import InputModels
 
 @main
 struct InputCustomizerApp: App {
@@ -35,14 +36,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let frontmostAppObserver = FrontmostAppObserver()
 
     private lazy var keyboardManager = KeyboardManager(settingsStore: settingsStore, activityLog: activityLog)
-    private lazy var mouseManager = MouseManager(settingsStore: settingsStore, activityLog: activityLog)
     private lazy var trackpadManager = TrackpadManager(settingsStore: settingsStore, visualizerModel: touchVisualizerModel, activityLog: activityLog)
+    // Reads TrackpadManager's live touch position to gate corner-click
+    // rules (see MouseManager.matchDescription) — `trackpadManager` is
+    // also `lazy`, so this closure is safe to capture it before it's been
+    // instantiated; it only runs once both are up.
+    private lazy var mouseManager = MouseManager(
+        settingsStore: settingsStore,
+        activityLog: activityLog,
+        lastTouchPosition: { [weak self] in self?.trackpadManager.lastTouchPosition ?? nil }
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
         observePauseState()
         observeProfiles()
+        observeAppearance()
         // Doesn't need Accessibility — plain NSWorkspace notifications —
         // so this starts independent of checkPermissionsAndStart() below.
         frontmostAppObserver.start { [weak self] bundleIdentifier in
@@ -101,6 +111,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePause() {
         settingsStore.isPaused.toggle()
+    }
+
+    /// `$appearance` (a `CurrentValueSubject`-backed `@Published` publisher)
+    /// emits its current value immediately on subscribe, so this also
+    /// applies the saved setting at launch — no separate "apply once at
+    /// startup" call needed.
+    private func observeAppearance() {
+        settingsStore.$appearance
+            .sink { appearance in NSApp.appearance = appearance.nsAppearance }
+            .store(in: &cancellables)
     }
 
     /// Rebuilds the "Switch Profile" submenu whenever the profile list or

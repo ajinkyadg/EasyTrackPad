@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import InputModels
 
 /// Shared "pick apps from /Applications" row fragment — used by
 /// `RuleFormView` (a single rule's `restrictedToApps`) and

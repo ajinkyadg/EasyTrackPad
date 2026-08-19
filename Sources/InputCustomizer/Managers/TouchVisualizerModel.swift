@@ -1,5 +1,7 @@
 import Combine
 import Foundation
+import GestureEngine
+import InputModels
 
 /// Shared live-touch state for the trackpad-gesture preview UI
 /// (`TouchVisualizerView`, embedded in `RuleFormView`'s gesture picker).
@@ -22,19 +24,34 @@ final class TouchVisualizerModel: ObservableObject {
     private var activeCount = 0
     var isActive: Bool { activeCount > 0 }
 
+    /// Which physical device's live touches this currently-open preview
+    /// panel (`TouchVisualizerView`) is showing — set by its `onAppear` to
+    /// match whichever device its sheet is editing rules for.
+    /// `TrackpadManager` runs both engines continuously regardless; this
+    /// only picks which one's frames get published into `touches` below
+    /// for the UI to draw, since only one device's dots can be shown in
+    /// a single preview box at a time.
+    @Published var previewDevice: InputDevice = .trackpad
+
     @Published private(set) var touches: [MultitouchGestureEngine.Touch] = []
     @Published private(set) var lastGesture: Trigger.GestureKind?
-    /// Whether `MultitouchGestureEngine` actually found a device and
-    /// started at launch — `false` means the private MultitouchSupport
-    /// framework has changed/disappeared on this macOS version, so
-    /// finger-count swipe/tap/split-swipe rules won't fire. Surfaced in
-    /// Preferences so this fails visibly instead of silently; pinch,
-    /// rotate, mouse, and keyboard rules don't depend on it and are
-    /// unaffected either way.
-    @Published private(set) var isMultitouchAvailable = true
+    /// Whether each device's `MultitouchGestureEngine` actually found its
+    /// physical device and started — `false` for a device means either
+    /// it's not connected (expected/common for `.magicMouse`) or the
+    /// private MultitouchSupport framework has changed/disappeared on
+    /// this macOS version. Surfaced in Preferences so this fails visibly
+    /// instead of silently; pinch, rotate, mouse, and keyboard rules
+    /// don't depend on it and are unaffected either way.
+    @Published private(set) var isTrackpadMultitouchAvailable = true
+    @Published private(set) var isMagicMouseMultitouchAvailable = true
 
-    func setMultitouchAvailable(_ available: Bool) {
-        isMultitouchAvailable = available
+    func setMultitouchAvailable(trackpad: Bool, magicMouse: Bool) {
+        isTrackpadMultitouchAvailable = trackpad
+        isMagicMouseMultitouchAvailable = magicMouse
+    }
+
+    func isMultitouchAvailable(for device: InputDevice) -> Bool {
+        device == .magicMouse ? isMagicMouseMultitouchAvailable : isTrackpadMultitouchAvailable
     }
 
     func activate() { activeCount += 1 }

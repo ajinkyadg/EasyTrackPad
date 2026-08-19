@@ -1,4 +1,5 @@
 import SwiftUI
+import InputModels
 
 struct SettingsView: View {
     @EnvironmentObject var settingsStore: SettingsStore
@@ -37,6 +38,13 @@ struct SettingsView: View {
             Divider().frame(height: 16)
             Toggle("Pause all rules", isOn: $settingsStore.isPaused)
             Spacer()
+            Picker("Appearance", selection: $settingsStore.appearance) {
+                ForEach(AppAppearance.allCases) { appearance in
+                    Text(appearance.displayName).tag(appearance)
+                }
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
         }
         .padding()
     }
@@ -126,10 +134,16 @@ struct RuleListView: View {
 
     var body: some View {
         VStack {
-            if device == .trackpad {
-                if !visualizerModel.isMultitouchAvailable {
+            // The trackpad and a Magic Mouse are both read simultaneously
+            // (see `TrackpadManager`'s doc comment) — the sensitivity/repeat
+            // sliders below tune both engines at once, so they show on
+            // both tabs.
+            if device == .trackpad || device == .magicMouse {
+                if !visualizerModel.isMultitouchAvailable(for: device) {
                     Label(
-                        "Trackpad gesture detection isn't available on this macOS version — swipe, tap, and split-swipe rules won't fire. Pinch, rotate, mouse, and keyboard rules are unaffected.",
+                        device == .magicMouse
+                            ? "No Magic Mouse detected — its swipe/tap/split-swipe rules won't fire until one is connected. Mouse click and keyboard rules are unaffected."
+                            : "Gesture detection isn't available right now — swipe, tap, and split-swipe/split-tap rules won't fire. Pinch, rotate, mouse clicks, and keyboard rules are unaffected.",
                         systemImage: "exclamationmark.triangle.fill"
                     )
                     .font(.caption)
@@ -212,8 +226,16 @@ struct RuleListView: View {
                             editingRule = rule
                         } label: {
                             HStack(spacing: 10) {
-                                if device == .trackpad, case let .trackpadGesture(kind) = rule.trigger {
+                                // No device check needed beyond the trigger
+                                // pattern match itself — `rulesForDevice`
+                                // already scoped this row to the current
+                                // tab, and both `.trackpad` and
+                                // `.magicMouse` rules can carry a
+                                // `.trackpadGesture` trigger.
+                                if case let .trackpadGesture(kind) = rule.trigger {
                                     GestureIconView(kind: kind)
+                                } else if case let .mouseCornerClick(corner, _, _) = rule.trigger {
+                                    MouseCornerIconView(corner: corner)
                                 }
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(rule.name).font(.system(size: 13, weight: .semibold))
@@ -295,6 +317,7 @@ struct RuleListView: View {
         switch trigger {
         case let .keyCombo(keyCode, modifiers): return KeyCodeMap.describe(keyCode: keyCode, modifiers: modifiers)
         case let .mouseButton(number, _): return "Button \(number)"
+        case let .mouseCornerClick(corner, number, _): return "Button \(number), \(corner.displayName)"
         case let .trackpadGesture(kind): return kind.displayName
         }
     }

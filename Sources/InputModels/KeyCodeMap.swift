@@ -3,13 +3,13 @@ import Cocoa
 /// Maps macOS virtual keyCodes (ANSI US layout) to human-readable labels,
 /// and formats a keyCode + modifier-flags combo as a shortcut string like
 /// "⌘⇧K" for display in the rules list and Add Rule sheet.
-enum KeyCodeMap {
+public enum KeyCodeMap {
     /// Sentinel used by the capture UI to mean "nothing recorded yet".
     /// Real keyCodes are 0...127, so UInt16.max is safe to use as "unset".
-    static let unset: UInt16 = .max
+    public static let unset: UInt16 = .max
 
     /// The modifier bits we actually match on (see Keyboard/MouseManager).
-    static let relevantModifiers: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
+    public static let relevantModifiers: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
 
     private static let labels: [UInt16: String] = [
         0: "A", 11: "B", 8: "C", 2: "D", 14: "E", 3: "F", 5: "G", 4: "H",
@@ -30,11 +30,11 @@ enum KeyCodeMap {
         43: ",", 47: ".", 44: "/", 50: "`"
     ]
 
-    static func label(forKeyCode keyCode: UInt16) -> String {
+    public static func label(forKeyCode keyCode: UInt16) -> String {
         labels[keyCode] ?? "Key #\(keyCode)"
     }
 
-    static func symbols(forModifiers modifiers: UInt) -> String {
+    public static func symbols(forModifiers modifiers: UInt) -> String {
         let flags = NSEvent.ModifierFlags(rawValue: UInt(modifiers))
         var result = ""
         if flags.contains(.control) { result += "⌃" }
@@ -44,7 +44,7 @@ enum KeyCodeMap {
         return result
     }
 
-    static func describe(keyCode: UInt16, modifiers: UInt) -> String {
+    public static func describe(keyCode: UInt16, modifiers: UInt) -> String {
         guard keyCode != unset else { return "Not set" }
         return symbols(forModifiers: modifiers) + label(forKeyCode: keyCode)
     }

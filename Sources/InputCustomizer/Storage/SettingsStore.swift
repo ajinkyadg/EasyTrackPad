@@ -1,5 +1,34 @@
+import AppKit
 import Foundation
 import Combine
+import InputModels
+
+/// The app's window/menu appearance — independent of `NSApp.effectiveAppearance`,
+/// which just reflects whatever this resolves to. `.system` means "don't
+/// override" (`nsAppearance` returns `nil`, and AppKit falls back to
+/// following the OS setting on its own); `.light`/`.dark` pin it
+/// regardless of the OS-wide setting, same as most native Mac apps'
+/// "Appearance" preference.
+enum AppAppearance: String, CaseIterable, Identifiable, Codable {
+    case system, light, dark
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
 
 /// Single source of truth for all profiles/rules. Persists to a JSON file
 /// in Application Support so rules survive app restarts and are easy to
@@ -38,10 +67,23 @@ final class SettingsStore: ObservableObject {
         profiles.first(where: { $0.id == selectedProfileID })
     }
 
+    /// Forces the app's windows/menus into Light or Dark regardless of the
+    /// OS-wide setting, or `.system` to just follow it — applied by
+    /// `AppDelegate` via `NSApp.appearance` whenever this changes.
+    @Published var appearance: AppAppearance = {
+        let raw = UserDefaults.standard.string(forKey: "appearance")
+        return raw.flatMap(AppAppearance.init(rawValue:)) ?? .system
+    }() {
+        didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") }
+    }
+
     /// When true, every manager skips rule matching entirely — a quick
     /// "kill switch" without having to disable each rule individually.
     @Published var isPaused: Bool = UserDefaults.standard.bool(forKey: "isPaused") {
-        didSet { UserDefaults.standard.set(isPaused, forKey: "isPaused") }
+        didSet {
+            UserDefaults.standard.set(isPaused, forKey: "isPaused")
+            deviceRulesCache.removeAll()
+        }
     }
 
     /// 0...1 — how easily trackpad swipes/taps trigger. See
@@ -129,13 +171,28 @@ final class SettingsStore: ObservableObject {
         mutate(&profiles[index])
     }
 
+    /// Memoizes `rules(for:)`'s per-device filter — cleared by
+    /// `recomputeActiveProfile()` and `isPaused`'s didSet, the only two
+    /// things that can change what it returns. Matters because
+    /// `KeyboardManager`/`MouseManager`/`TrackpadManager` call this from
+    /// realtime CGEventTap/multitouch callbacks (keyboard: every single
+    /// system-wide keystroke) — re-filtering the active profile's whole
+    /// rule list from scratch on every event was measurable, avoidable
+    /// work on a latency-sensitive path where a slow callback risks macOS
+    /// disabling the event tap outright.
+    private var deviceRulesCache: [InputDevice: [CustomizationRule]] = [:]
+
     /// What the managers actually match against — the *active* profile's
     /// rules (which can differ from the selected/edited one while an
     /// app-triggered auto-activation is live), filtered to this device
     /// and enabled. Empty while paused.
     func rules(for device: InputDevice) -> [CustomizationRule] {
-        guard !isPaused, let active = profiles.first(where: { $0.id == activeProfileID }) else { return [] }
-        return active.rules.filter { $0.device == device && $0.isEnabled }
+        guard !isPaused else { return [] }
+        if let cached = deviceRulesCache[device] { return cached }
+        guard let active = profiles.first(where: { $0.id == activeProfileID }) else { return [] }
+        let matched = active.rules.filter { $0.device == device && $0.isEnabled }
+        deviceRulesCache[device] = matched
+        return matched
     }
 
     // MARK: - Profiles
@@ -227,6 +284,7 @@ final class SettingsStore: ObservableObject {
             selectedProfileID: selectedProfileID,
             frontmostBundleIdentifier: lastFrontmostBundleIdentifier
         )
+        deviceRulesCache.removeAll()
     }
 
     // MARK: - Persistence

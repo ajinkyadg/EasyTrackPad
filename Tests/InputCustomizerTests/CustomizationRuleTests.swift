@@ -1,6 +1,8 @@
 import Cocoa
 import XCTest
 @testable import InputCustomizer
+import GestureEngine
+import InputModels
 
 final class CustomizationRuleTests: XCTestCase {
     func testRuleRoundTripsThroughJSON() throws {
@@ -13,6 +15,61 @@ final class CustomizationRuleTests: XCTestCase {
         let data = try JSONEncoder().encode(rule)
         let decoded = try JSONDecoder().decode(CustomizationRule.self, from: data)
         XCTAssertEqual(rule, decoded)
+    }
+
+    func testMouseCornerClickTriggerRoundTripsThroughJSON() throws {
+        let rule = CustomizationRule(
+            name: "Close tab",
+            device: .mouse,
+            trigger: .mouseCornerClick(corner: .topRight, number: 0, modifiers: 0),
+            action: .remapToKey(keyCode: 13, modifiers: 1_048_576)
+        )
+        let data = try JSONEncoder().encode(rule)
+        let decoded = try JSONDecoder().decode(CustomizationRule.self, from: data)
+        XCTAssertEqual(rule, decoded)
+    }
+
+    func testMouseCornerResolveOnlyMatchesNearACornerNotTheMiddleOrAnEdge() {
+        XCTAssertEqual(MouseCorner.resolve(from: CGPoint(x: 0.05, y: 0.95)), .topLeft)
+        XCTAssertEqual(MouseCorner.resolve(from: CGPoint(x: 0.95, y: 0.95)), .topRight)
+        XCTAssertEqual(MouseCorner.resolve(from: CGPoint(x: 0.05, y: 0.05)), .bottomLeft)
+        XCTAssertEqual(MouseCorner.resolve(from: CGPoint(x: 0.95, y: 0.05)), .bottomRight)
+
+        XCTAssertNil(MouseCorner.resolve(from: CGPoint(x: 0.5, y: 0.5)), "dead center isn't near any corner")
+        XCTAssertNil(MouseCorner.resolve(from: CGPoint(x: 0.05, y: 0.5)), "near the left edge, but not top or bottom")
+        XCTAssertNil(MouseCorner.resolve(from: CGPoint(x: 0.5, y: 0.95)), "near the top edge, but not left or right")
+    }
+
+    /// `RulePreset.id == name` (see its doc comment) — a duplicate name
+    /// would mean two presets silently collide as the same `Identifiable`
+    /// item in the "Add from Preset" list. Guards against exactly the
+    /// kind of collision that was almost introduced when the Magic Mouse
+    /// preset list grew to 26 entries (e.g. "Mission Control" already
+    /// existed as a plain trackpad preset).
+    func testGesturePresetsHaveUniqueNames() {
+        let names = GesturePresets.all.map(\.name)
+        let duplicates = Dictionary(grouping: names, by: { $0 }).filter { $0.value.count > 1 }.keys
+        XCTAssertTrue(duplicates.isEmpty, "duplicate preset name(s): \(duplicates)")
+    }
+
+    /// Locks in the numeric value of `GesturePresets`'s private
+    /// Control+Command modifier constant indirectly, the same way the
+    /// existing modifier constants are only ever exercised through a
+    /// preset's actual encoded action — a typo'd raw value here would
+    /// silently post the wrong modifier keys.
+    func testControlCommandModifierPresetsEncodeTheExpectedModifierValue() {
+        let controlCommand: UInt = 1_310_720
+        for name in ["Full Screen Toggle (3-Finger Swipe Up)", "Lock Screen (3-Finger Tap)"] {
+            guard let preset = GesturePresets.all.first(where: { $0.name == name }) else {
+                XCTFail("expected preset \(name) to exist")
+                continue
+            }
+            guard case let .remapToKey(_, modifiers) = preset.action else {
+                XCTFail("expected \(name) to be a remapToKey action")
+                continue
+            }
+            XCTAssertEqual(modifiers, controlCommand, "\(name) should use Control+Command")
+        }
     }
 
     func testAppliesWhileFrontmostAppIsRespectsRestrictedToApps() {
@@ -136,17 +193,36 @@ final class CustomizationRuleTests: XCTestCase {
         XCTAssertEqual(Trigger.GestureKind.twoFingerRightSwipeUp.swipeAngleDegrees, 90)
         XCTAssertEqual(Trigger.GestureKind.twoFingerRightSwipeDown.swipeAngleDegrees, 270)
 
-        XCTAssertEqual(Trigger.GestureKind.twoFingerLeftSwipeUp.splitSwipeMovingFingerIsLeft, true)
-        XCTAssertEqual(Trigger.GestureKind.twoFingerLeftSwipeDown.splitSwipeMovingFingerIsLeft, true)
-        XCTAssertEqual(Trigger.GestureKind.twoFingerRightSwipeUp.splitSwipeMovingFingerIsLeft, false)
-        XCTAssertEqual(Trigger.GestureKind.twoFingerRightSwipeDown.splitSwipeMovingFingerIsLeft, false)
-        XCTAssertNil(Trigger.GestureKind.twoFingerSwipeUp.splitSwipeMovingFingerIsLeft)
+        XCTAssertEqual(Trigger.GestureKind.twoFingerLeftSwipeUp.splitActiveFingerIsLeft, true)
+        XCTAssertEqual(Trigger.GestureKind.twoFingerLeftSwipeDown.splitActiveFingerIsLeft, true)
+        XCTAssertEqual(Trigger.GestureKind.twoFingerRightSwipeUp.splitActiveFingerIsLeft, false)
+        XCTAssertEqual(Trigger.GestureKind.twoFingerRightSwipeDown.splitActiveFingerIsLeft, false)
+        XCTAssertNil(Trigger.GestureKind.twoFingerSwipeUp.splitActiveFingerIsLeft)
 
         XCTAssertFalse(Trigger.GestureKind.twoFingerLeftSwipeUp.isDoubleTap)
         XCTAssertNotEqual(Trigger.GestureKind.twoFingerLeftSwipeUp.displayName, Trigger.GestureKind.twoFingerRightSwipeUp.displayName)
 
         XCTAssertTrue(Trigger.trackpadGesture(.twoFingerLeftSwipeUp).supportsRepeatWhileHeld)
         XCTAssertTrue(Trigger.trackpadGesture(.twoFingerRightSwipeDown).supportsRepeatWhileHeld)
+    }
+
+    func testSplitTapKindsHaveCorrectDerivedProperties() {
+        XCTAssertEqual(Trigger.GestureKind.twoFingerLeftTap.category, .splitTap)
+        XCTAssertEqual(Trigger.GestureKind.twoFingerRightTap.category, .splitTap)
+
+        XCTAssertEqual(Trigger.GestureKind.twoFingerLeftTap.fingerCount, 2)
+        XCTAssertNil(Trigger.GestureKind.twoFingerLeftTap.swipeAngleDegrees, "a tap has no travel direction")
+
+        XCTAssertEqual(Trigger.GestureKind.twoFingerLeftTap.splitActiveFingerIsLeft, true)
+        XCTAssertEqual(Trigger.GestureKind.twoFingerRightTap.splitActiveFingerIsLeft, false)
+
+        XCTAssertFalse(Trigger.GestureKind.twoFingerLeftTap.isDoubleTap)
+        XCTAssertNotEqual(Trigger.GestureKind.twoFingerLeftTap.displayName, Trigger.GestureKind.twoFingerRightTap.displayName)
+
+        // Unlike split-swipe, a split-tap isn't a "hold" gesture — nothing
+        // to repeat while held, and it doesn't measure travel at all.
+        XCTAssertFalse(Trigger.trackpadGesture(.twoFingerLeftTap).supportsRepeatWhileHeld)
+        XCTAssertFalse(Trigger.trackpadGesture(.twoFingerRightTap).supportsRepeatByDistance)
     }
 
     func testSupportsRepeatWhileHeldOnlyForSwipeTriggers() {

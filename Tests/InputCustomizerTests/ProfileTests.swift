@@ -1,5 +1,6 @@
 import XCTest
 @testable import InputCustomizer
+import InputModels
 
 final class ProfileTests: XCTestCase {
     private func scratchStore() -> SettingsStore {
