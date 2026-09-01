@@ -76,7 +76,7 @@ final class GestureRecognizerTests: XCTestCase {
         XCTAssertTrue(fired.isEmpty)
     }
 
-    // MARK: - Proximity gate (surfaceSizeMM / maxSplitGestureFingerDistanceMM)
+    // MARK: - Proximity gate (surfaceSizeMM / min-max SplitGestureFingerDistanceMM)
 
     /// Regression test for the actual bug report: a split-swipe fired
     /// regardless of how far apart the two fingers started. With the gate
@@ -87,8 +87,9 @@ final class GestureRecognizerTests: XCTestCase {
         var fired: [Trigger.GestureKind] = []
         recognizer.onGesture = { fired.append($0) }
 
-        // 0.3 apart on a 130mm-wide trackpad is 39mm — nowhere near
-        // "touching" — but the gate is opt-in, so this must still fire.
+        // 0.3 apart on a 130mm-wide trackpad is 39mm — nowhere near the
+        // 25-35mm range the gate would otherwise require — but the gate
+        // is opt-in, so this must still fire.
         recognizer.process(.init(touches: [touch(1, 0.3, 0.5), touch(2, 0.6, 0.5)], timestamp: 0))
         recognizer.process(.init(touches: [touch(1, 0.3, 0.8), touch(2, 0.6, 0.5)], timestamp: 0.05))
 
@@ -98,29 +99,45 @@ final class GestureRecognizerTests: XCTestCase {
     func testSplitSwipeDoesNotFireWhenFingersStartTooFarApart() {
         let recognizer = GestureRecognizer()
         recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
-        recognizer.maxSplitGestureFingerDistanceMM = 5
         var fired: [Trigger.GestureKind] = []
         recognizer.onGesture = { fired.append($0) }
 
-        // Same 0.3-normalized-unit gap as above (39mm) — should now be
-        // gated out entirely.
+        // 39mm — above the default 35mm ceiling — should be gated out
+        // entirely, including the ordinary centroid-based swipe fallback
+        // (a single moving finger out of two still shifts the centroid
+        // enough to otherwise fire a plain twoFingerSwipeUp).
         recognizer.process(.init(touches: [touch(1, 0.3, 0.5), touch(2, 0.6, 0.5)], timestamp: 0))
         recognizer.process(.init(touches: [touch(1, 0.3, 0.8), touch(2, 0.6, 0.5)], timestamp: 0.05))
 
         XCTAssertTrue(fired.isEmpty)
     }
 
-    func testSplitSwipeStillFiresWhenFingersStartWithinTheProximityThreshold() {
+    func testSplitSwipeDoesNotFireWhenFingersStartTooClose() {
         let recognizer = GestureRecognizer()
         recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
-        recognizer.maxSplitGestureFingerDistanceMM = 5
         var fired: [Trigger.GestureKind] = []
         recognizer.onGesture = { fired.append($0) }
 
-        // 0.02 normalized on a 130mm-wide trackpad is 2.6mm — within the
-        // 5mm gate.
+        // 2.6mm — below the default 25mm floor (this is the "fingers
+        // pressed directly together" case that turned out to never
+        // actually fire on real hardware, and is excluded on its own
+        // terms now rather than accidentally satisfying a max-only gate).
         recognizer.process(.init(touches: [touch(1, 0.48, 0.5), touch(2, 0.5, 0.5)], timestamp: 0))
         recognizer.process(.init(touches: [touch(1, 0.48, 0.8), touch(2, 0.5, 0.5)], timestamp: 0.05))
+
+        XCTAssertTrue(fired.isEmpty)
+    }
+
+    func testSplitSwipeStillFiresWhenFingersStartWithinTheProximityRange() {
+        let recognizer = GestureRecognizer()
+        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        // 0.23 normalized on a 130mm-wide trackpad is 29.9mm — inside the
+        // default 25-35mm range.
+        recognizer.process(.init(touches: [touch(1, 0.35, 0.5), touch(2, 0.58, 0.5)], timestamp: 0))
+        recognizer.process(.init(touches: [touch(1, 0.35, 0.8), touch(2, 0.58, 0.5)], timestamp: 0.05))
 
         XCTAssertEqual(fired, [.twoFingerLeftSwipeUp])
     }
@@ -128,7 +145,6 @@ final class GestureRecognizerTests: XCTestCase {
     func testSplitTapDoesNotFireWhenFingersStartTooFarApart() {
         let recognizer = GestureRecognizer()
         recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
-        recognizer.maxSplitGestureFingerDistanceMM = 5
         var fired: [Trigger.GestureKind] = []
         recognizer.onGesture = { fired.append($0) }
 
