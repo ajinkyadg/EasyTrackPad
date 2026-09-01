@@ -98,6 +98,15 @@ final class TrackpadManager {
         // comment. A different Mac model's trackpad would need its own
         // measurement; this isn't derived from the model programmatically.
         trackpadRecognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        // Diagnostic: shows the real measured finger distance in the
+        // Console view whenever a split-swipe's shape matched but was
+        // gated for falling outside the range above — lets it get tuned
+        // against real numbers instead of guesswork.
+        trackpadRecognizer.onSplitGestureGated = { [weak self] distanceMM in
+            guard let self else { return }
+            let range = "\(Int(self.trackpadRecognizer.minSplitGestureFingerDistanceMM))-\(Int(self.trackpadRecognizer.maxSplitGestureFingerDistanceMM))mm"
+            self.activityLog.log(.info, "Split gesture blocked: fingers were \(String(format: "%.1f", distanceMM))mm apart (allowed range \(range))")
+        }
 
         trackpadEngine.onFrame = { [weak self] frame in
             // Runs on MultitouchSupport's own callback thread, not main —

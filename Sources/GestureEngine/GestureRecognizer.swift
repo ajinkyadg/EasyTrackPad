@@ -85,17 +85,27 @@ public final class GestureRecognizer {
     /// whose shell is a very different size and shape.
     public var surfaceSizeMM: CGSize?
 
-    /// Maximum distance apart (in mm, via `surfaceSizeMM`) the two
-    /// fingers' touch-down positions can be for a split-swipe/split-tap
+    /// Distance range (in mm, via `surfaceSizeMM`) the two fingers'
+    /// touch-down positions must fall within for a split-swipe/split-tap
     /// (one anchored, the other swipes or re-taps) to be recognized at
     /// all — requires the fingers to have started genuinely close
-    /// together ("touching"), not just any two-finger-down posture.
-    /// Measured at touch-down, not held continuously — the swipe variant
-    /// requires the mover to travel past its swipe threshold, which
-    /// necessarily carries it away from the anchor, so a continuous
-    /// closeness requirement would make the swipe case unsatisfiable by
+    /// together, not just any two-finger-down posture, but also excludes
+    /// near-zero/overlapping contact as its own distinct "too close" case
+    /// (likely blob-merged into a single touch by the trackpad's own
+    /// sensor before ever reaching this code anyway). Measured at
+    /// touch-down, not held continuously — the swipe variant requires the
+    /// mover to travel past its swipe threshold, which necessarily
+    /// carries it away from the anchor, so a continuous closeness
+    /// requirement would make the swipe case unsatisfiable by
     /// construction. Only takes effect when `surfaceSizeMM` is set.
-    public var maxSplitGestureFingerDistanceMM: CGFloat = 5
+    ///
+    /// 30mm ± 5mm (25-35mm), not the originally-tried flat 5mm ceiling:
+    /// two real fingertips pressed directly against each other still
+    /// typically measure roughly one finger-width apart center-to-center
+    /// rather than under 5mm — confirmed on real hardware, where a 5mm
+    /// ceiling never fired even with fingers deliberately touching.
+    public var minSplitGestureFingerDistanceMM: CGFloat = 25
+    public var maxSplitGestureFingerDistanceMM: CGFloat = 35
 
     /// User-facing tuning knob: 0 (least sensitive — requires a larger,
     /// more deliberate swipe, and stricter stillness for a tap) to 1
@@ -721,19 +731,37 @@ public final class GestureRecognizer {
         return .recognized(kind)
     }
 
+    /// Real measured distance (mm) between the two fingers currently in
+    /// `splitReferences`, or `nil` if `surfaceSizeMM` is unset (gate
+    /// disabled) or there aren't exactly 2 references to compare.
+    private func splitFingersDistanceMM() -> CGFloat? {
+        guard let surfaceSizeMM, splitReferences.count == 2 else { return nil }
+        let positions: [CGPoint] = splitReferences.values.map(\.position)
+        let dx = (positions[0].x - positions[1].x) * surfaceSizeMM.width
+        let dy = (positions[0].y - positions[1].y) * surfaceSizeMM.height
+        return hypot(dx, dy)
+    }
+
+    /// Fires with the actual measured distance (mm) whenever a
+    /// split-swipe's anchor+mover shape matched but got gated for falling
+    /// outside `minSplitGestureFingerDistanceMM`...`maxSplitGestureFingerDistanceMM`
+    /// — lets `TrackpadManager` surface real numbers in its Console view
+    /// instead of guessing at what range is realistic. Diagnostic only;
+    /// never fires when `surfaceSizeMM` is unset.
+    public var onSplitGestureGated: ((CGFloat) -> Void)?
+
     /// Whether the two fingers currently in `splitReferences` started
-    /// close enough together (per `surfaceSizeMM`/
+    /// within range (per `surfaceSizeMM`/`minSplitGestureFingerDistanceMM`/
     /// `maxSplitGestureFingerDistanceMM`) for a split-swipe/split-tap to
     /// be eligible at all. `true` whenever `surfaceSizeMM` is unset (or
     /// there aren't exactly 2 references to compare) — the gate is
     /// opt-in, matching `minimumFingerSeparation`'s default-off
     /// convention above.
     private func splitFingersStartedCloseEnough() -> Bool {
-        guard let surfaceSizeMM, splitReferences.count == 2 else { return true }
-        let positions: [CGPoint] = splitReferences.values.map(\.position)
-        let dx = (positions[0].x - positions[1].x) * surfaceSizeMM.width
-        let dy = (positions[0].y - positions[1].y) * surfaceSizeMM.height
-        return hypot(dx, dy) <= maxSplitGestureFingerDistanceMM
+        guard let distance = splitFingersDistanceMM() else { return true }
+        let withinRange = distance >= minSplitGestureFingerDistanceMM && distance <= maxSplitGestureFingerDistanceMM
+        if !withinRange { onSplitGestureGated?(distance) }
+        return withinRange
     }
 
     /// 8 compass directions, ordered to match `Int((angle + 22.5) / 45) % 8`
