@@ -76,7 +76,7 @@ final class GestureRecognizerTests: XCTestCase {
         XCTAssertTrue(fired.isEmpty)
     }
 
-    // MARK: - Proximity gate (surfaceSizeMM / min-max SplitGestureFingerDistanceMM)
+    // MARK: - Proximity gate (surfaceSizeMM / maxSplitGestureFingerDistanceMM)
 
     /// Regression test for the actual bug report: a split-swipe fired
     /// regardless of how far apart the two fingers started. With the gate
@@ -87,9 +87,9 @@ final class GestureRecognizerTests: XCTestCase {
         var fired: [Trigger.GestureKind] = []
         recognizer.onGesture = { fired.append($0) }
 
-        // 0.3 apart on a 130mm-wide trackpad is 39mm — nowhere near the
-        // 25-35mm range the gate would otherwise require — but the gate
-        // is opt-in, so this must still fire.
+        // 0.3 apart on a 130mm-wide trackpad is 39mm — above the 35mm
+        // ceiling the gate would otherwise enforce — but the gate is
+        // opt-in, so this must still fire.
         recognizer.process(.init(touches: [touch(1, 0.3, 0.5), touch(2, 0.6, 0.5)], timestamp: 0))
         recognizer.process(.init(touches: [touch(1, 0.3, 0.8), touch(2, 0.6, 0.5)], timestamp: 0.05))
 
@@ -112,32 +112,16 @@ final class GestureRecognizerTests: XCTestCase {
         XCTAssertTrue(fired.isEmpty)
     }
 
-    func testSplitSwipeDoesNotFireWhenFingersStartTooClose() {
+    func testSplitSwipeStillFiresWhenFingersStartWithinTheProximityThreshold() {
         let recognizer = GestureRecognizer()
         recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
         var fired: [Trigger.GestureKind] = []
         recognizer.onGesture = { fired.append($0) }
 
-        // 2.6mm — below the default 25mm floor (this is the "fingers
-        // pressed directly together" case that turned out to never
-        // actually fire on real hardware, and is excluded on its own
-        // terms now rather than accidentally satisfying a max-only gate).
+        // 2.6mm — near-zero, i.e. fingers pressed directly together —
+        // there's no minimum, so this still counts as "close enough."
         recognizer.process(.init(touches: [touch(1, 0.48, 0.5), touch(2, 0.5, 0.5)], timestamp: 0))
         recognizer.process(.init(touches: [touch(1, 0.48, 0.8), touch(2, 0.5, 0.5)], timestamp: 0.05))
-
-        XCTAssertTrue(fired.isEmpty)
-    }
-
-    func testSplitSwipeStillFiresWhenFingersStartWithinTheProximityRange() {
-        let recognizer = GestureRecognizer()
-        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
-        var fired: [Trigger.GestureKind] = []
-        recognizer.onGesture = { fired.append($0) }
-
-        // 0.23 normalized on a 130mm-wide trackpad is 29.9mm — inside the
-        // default 25-35mm range.
-        recognizer.process(.init(touches: [touch(1, 0.35, 0.5), touch(2, 0.58, 0.5)], timestamp: 0))
-        recognizer.process(.init(touches: [touch(1, 0.35, 0.8), touch(2, 0.58, 0.5)], timestamp: 0.05))
 
         XCTAssertEqual(fired, [.twoFingerLeftSwipeUp])
     }

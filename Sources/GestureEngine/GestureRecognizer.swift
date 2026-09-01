@@ -80,26 +80,26 @@ public final class GestureRecognizer {
     /// whose shell is a very different size and shape.
     public var surfaceSizeMM: CGSize?
 
-    /// Distance range (in mm, via `surfaceSizeMM`) the two fingers'
-    /// touch-down positions must fall within for a split-swipe/split-tap
+    /// Maximum distance apart (in mm, via `surfaceSizeMM`) the two
+    /// fingers' touch-down positions can be for a split-swipe/split-tap
     /// (one anchored, the other swipes or re-taps) to be recognized at
     /// all — requires the fingers to have started genuinely close
-    /// together, not just any two-finger-down posture, but also excludes
-    /// near-zero/overlapping contact as its own distinct "too close" case
-    /// (likely blob-merged into a single touch by the trackpad's own
-    /// sensor before ever reaching this code anyway). Measured at
+    /// together, not just any two-finger-down posture. No minimum: any
+    /// distance from fingers directly touching (0mm) up to this ceiling
+    /// counts — a min floor was tried and dropped, since there's no real
+    /// reason near-zero/overlapping contact should be treated as
+    /// *invalid* rather than just "as close as it gets." Measured at
     /// touch-down, not held continuously — the swipe variant requires the
     /// mover to travel past `swipeDistanceThreshold`, which necessarily
     /// carries it away from the anchor, so a continuous closeness
     /// requirement would make the swipe case unsatisfiable by
     /// construction. Only takes effect when `surfaceSizeMM` is set.
     ///
-    /// 30mm ± 5mm (25-35mm), not the originally-tried flat 5mm ceiling:
-    /// two real fingertips pressed directly against each other still
-    /// typically measure roughly one finger-width apart center-to-center
-    /// rather than under 5mm — confirmed on real hardware, where a 5mm
-    /// ceiling never fired even with fingers deliberately touching.
-    public var minSplitGestureFingerDistanceMM: CGFloat = 25
+    /// 35mm, not the originally-tried 5mm: two real fingertips pressed
+    /// directly against each other still typically measure roughly one
+    /// finger-width apart center-to-center rather than under 5mm —
+    /// confirmed on real hardware, where a 5mm ceiling never fired even
+    /// with fingers deliberately touching.
     public var maxSplitGestureFingerDistanceMM: CGFloat = 35
 
     /// User-facing tuning knob: 0 (least sensitive — requires a larger,
@@ -417,15 +417,15 @@ public final class GestureRecognizer {
     }
 
     /// Fires with the actual measured distance (mm) whenever a
-    /// split-swipe's anchor+mover shape matched but got gated for falling
-    /// outside `minSplitGestureFingerDistanceMM`...`maxSplitGestureFingerDistanceMM`
-    /// — lets `TrackpadManager` surface real numbers in its Console view
-    /// instead of guessing at what range is realistic. Diagnostic only;
-    /// never fires when `surfaceSizeMM` is unset.
+    /// split-swipe's anchor+mover shape matched but got gated for
+    /// exceeding `maxSplitGestureFingerDistanceMM` — lets `TrackpadManager`
+    /// surface real numbers in its Console view instead of guessing at
+    /// what ceiling is realistic. Diagnostic only; never fires when
+    /// `surfaceSizeMM` is unset.
     public var onSplitGestureGated: ((CGFloat) -> Void)?
 
     /// Whether the two fingers currently in `splitReferences` started
-    /// within range (per `surfaceSizeMM`/`minSplitGestureFingerDistanceMM`/
+    /// close enough together (per `surfaceSizeMM`/
     /// `maxSplitGestureFingerDistanceMM`) for a split-swipe/split-tap to
     /// be eligible at all. `true` whenever `surfaceSizeMM` is unset (or
     /// there aren't exactly 2 references to compare) — the gate is
@@ -433,9 +433,9 @@ public final class GestureRecognizer {
     /// convention above.
     private func splitFingersStartedCloseEnough() -> Bool {
         guard let distance = splitFingersDistanceMM() else { return true }
-        let withinRange = distance >= minSplitGestureFingerDistanceMM && distance <= maxSplitGestureFingerDistanceMM
-        if !withinRange { onSplitGestureGated?(distance) }
-        return withinRange
+        let closeEnough = distance <= maxSplitGestureFingerDistanceMM
+        if !closeEnough { onSplitGestureGated?(distance) }
+        return closeEnough
     }
 
     /// Resolves a pending "anchor + tap": `pendingSplitTap` was armed the
