@@ -104,7 +104,12 @@ printf 'Exported %s\n' "$APP_PATH"
 if [[ "${INPUTCUSTOMIZER_SKIP_INSTALL:-0}" != "1" ]]; then
     INSTALL_DIR="${INPUTCUSTOMIZER_INSTALL_DIR:-/Applications}"
     INSTALLED_APP_PATH="$INSTALL_DIR/$APP_NAME.app"
-    pkill -f "$INSTALLED_APP_PATH/Contents/MacOS/$APP_NAME" >/dev/null 2>&1 || true
+    # The running binary inside the bundle is EXECUTABLE_NAME
+    # ("InputCustomizer"), not APP_NAME ("InputCustomizerLite") — using
+    # APP_NAME here matched nothing, silently leaving a stale pre-rebuild
+    # process running (and its stale permissions/state) even after a
+    # fresh install replaced the bundle on disk.
+    pkill -f "$INSTALLED_APP_PATH/Contents/MacOS/$EXECUTABLE_NAME" >/dev/null 2>&1 || true
     rm -rf "$INSTALLED_APP_PATH"
     mkdir -p "$INSTALL_DIR"
     cp -R "$APP_PATH" "$INSTALLED_APP_PATH"
