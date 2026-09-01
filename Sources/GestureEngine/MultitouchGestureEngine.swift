@@ -28,11 +28,19 @@ public final class MultitouchGestureEngine {
         public let id: Int32
         /// Normalized 0...1 position over the trackpad surface.
         public let position: CGPoint
+        /// MultitouchSupport's separate "absolute" position — units
+        /// undocumented (Apple never published this API). Not yet used for
+        /// anything; captured so it can be compared against a real,
+        /// physically-measured finger separation to figure out what unit
+        /// it's actually in, before trusting it for a real mm-based
+        /// proximity threshold.
+        public let absolutePosition: CGPoint
         public let state: Int32
 
-        public init(id: Int32, position: CGPoint, state: Int32) {
+        public init(id: Int32, position: CGPoint, absolutePosition: CGPoint = .zero, state: Int32) {
             self.id = id
             self.position = position
+            self.absolutePosition = absolutePosition
             self.state = state
         }
     }
@@ -139,6 +147,7 @@ public final class MultitouchGestureEngine {
                 touches.append(Touch(
                     id: raw.identifier,
                     position: CGPoint(x: CGFloat(raw.normalizedVector.position.x), y: CGFloat(raw.normalizedVector.position.y)),
+                    absolutePosition: CGPoint(x: CGFloat(raw.absoluteVector.position.x), y: CGFloat(raw.absoluteVector.position.y)),
                     state: raw.state
                 ))
             }
