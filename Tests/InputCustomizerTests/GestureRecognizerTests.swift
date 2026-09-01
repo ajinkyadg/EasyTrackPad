@@ -255,6 +255,71 @@ final class GestureRecognizerTests: XCTestCase {
         XCTAssertTrue(fired.isEmpty)
     }
 
+    // MARK: - Proximity gate (surfaceSizeMM / maxSplitGestureFingerDistanceMM)
+
+    /// Regression test for the actual bug report: a split-swipe fired
+    /// regardless of how far apart the two fingers started. With the gate
+    /// off (surfaceSizeMM unset, the default) it's unchanged from every
+    /// other split-swipe test above.
+    func testSplitSwipeFiresRegardlessOfDistanceWhenGateIsUnset() {
+        let recognizer = GestureRecognizer()
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        // 0.3 apart on a 130mm-wide trackpad is 39mm — nowhere near
+        // "touching" — but the gate is opt-in, so this must still fire.
+        recognizer.process(.init(touches: [touch(1, 0.3, 0.5), touch(2, 0.6, 0.5)], timestamp: 0))
+        recognizer.process(.init(touches: [touch(1, 0.3, 0.8), touch(2, 0.6, 0.5)], timestamp: 0.05))
+
+        XCTAssertEqual(fired, [.twoFingerLeftSwipeUp])
+    }
+
+    func testSplitSwipeDoesNotFireWhenFingersStartTooFarApart() {
+        let recognizer = GestureRecognizer()
+        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        recognizer.maxSplitGestureFingerDistanceMM = 5
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        // Same 0.3-normalized-unit gap as above (39mm) — should now be
+        // gated out entirely, including the ordinary centroid-based
+        // swipe fallback (a single moving finger out of two still shifts
+        // the centroid enough to otherwise fire a plain twoFingerSwipeUp).
+        recognizer.process(.init(touches: [touch(1, 0.3, 0.5), touch(2, 0.6, 0.5)], timestamp: 0))
+        recognizer.process(.init(touches: [touch(1, 0.3, 0.8), touch(2, 0.6, 0.5)], timestamp: 0.05))
+
+        XCTAssertTrue(fired.isEmpty)
+    }
+
+    func testSplitSwipeStillFiresWhenFingersStartWithinTheProximityThreshold() {
+        let recognizer = GestureRecognizer()
+        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        recognizer.maxSplitGestureFingerDistanceMM = 5
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        // 0.02 normalized on a 130mm-wide trackpad is 2.6mm — within the
+        // 5mm gate.
+        recognizer.process(.init(touches: [touch(1, 0.48, 0.5), touch(2, 0.5, 0.5)], timestamp: 0))
+        recognizer.process(.init(touches: [touch(1, 0.48, 0.8), touch(2, 0.5, 0.5)], timestamp: 0.05))
+
+        XCTAssertEqual(fired, [.twoFingerLeftSwipeUp])
+    }
+
+    func testSplitTapDoesNotFireWhenFingersStartTooFarApart() {
+        let recognizer = GestureRecognizer()
+        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        recognizer.maxSplitGestureFingerDistanceMM = 5
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        recognizer.process(.init(touches: [touch(1, 0.3, 0.5), touch(2, 0.6, 0.5)], timestamp: 0)) // 39mm apart
+        recognizer.process(.init(touches: [touch(2, 0.6, 0.5)], timestamp: 0.05))
+        recognizer.process(.init(touches: [touch(3, 0.31, 0.5), touch(2, 0.6, 0.5)], timestamp: 0.1))
+
+        XCTAssertTrue(fired.isEmpty)
+    }
+
     // MARK: - Split tap (2 fingers down, one anchored, the other lifts and taps again)
 
     func testLeftFingerTapsWhileRightFingerStaysAnchored() {

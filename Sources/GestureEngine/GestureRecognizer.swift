@@ -73,6 +73,30 @@ public final class GestureRecognizer {
     /// other geometry constants.
     public var minimumFingerSeparation: CGFloat = 0
 
+    /// Real-world trackpad surface size, in millimeters — converts
+    /// normalized touch-position deltas into actual physical distance for
+    /// `maxSplitGestureFingerDistanceMM`. `nil` (the default) disables the
+    /// proximity gate entirely, so a split-swipe/split-tap fires
+    /// regardless of how far apart the two fingers started (today's
+    /// behavior, and what every existing test still gets since none of
+    /// them set this). Apple doesn't publish trackpad glass dimensions;
+    /// `TrackpadManager` sets this from a physically-measured value
+    /// (ruler, not a spec sheet) for the trackpad only — not Magic Mouse,
+    /// whose shell is a very different size and shape.
+    public var surfaceSizeMM: CGSize?
+
+    /// Maximum distance apart (in mm, via `surfaceSizeMM`) the two
+    /// fingers' touch-down positions can be for a split-swipe/split-tap
+    /// (one anchored, the other swipes or re-taps) to be recognized at
+    /// all — requires the fingers to have started genuinely close
+    /// together ("touching"), not just any two-finger-down posture.
+    /// Measured at touch-down, not held continuously — the swipe variant
+    /// requires the mover to travel past its swipe threshold, which
+    /// necessarily carries it away from the anchor, so a continuous
+    /// closeness requirement would make the swipe case unsatisfiable by
+    /// construction. Only takes effect when `surfaceSizeMM` is set.
+    public var maxSplitGestureFingerDistanceMM: CGFloat = 5
+
     /// User-facing tuning knob: 0 (least sensitive — requires a larger,
     /// more deliberate swipe, and stricter stillness for a tap) to 1
     /// (most sensitive — small movements trigger easily). Defaults to
@@ -226,6 +250,14 @@ public final class GestureRecognizer {
         let anchor: FingerReference
         let departedFingerWasLeft: Bool
         let since: TimeInterval
+        /// Whether the two fingers started close enough together (per
+        /// `surfaceSizeMM`/`maxSplitGestureFingerDistanceMM`) to be
+        /// eligible at all — computed once, when this is armed, from the
+        /// full two-finger `splitReferences` that existed at that moment
+        /// (by the time this is resolved, one finger has already lifted,
+        /// so there's no later point where both original positions are
+        /// still available to check).
+        let startedClose: Bool
     }
     private var pendingSplitTap: PendingSplitTap?
 
@@ -340,7 +372,12 @@ public final class GestureRecognizer {
                 }
                 if activeFingerCount == 2, count == 1, let onlyTouch = touching.first,
                    let survivor = splitReferences[onlyTouch.id] {
-                    pendingSplitTap = PendingSplitTap(anchor: survivor, departedFingerWasLeft: !survivor.isLeft, since: frame.timestamp)
+                    pendingSplitTap = PendingSplitTap(
+                        anchor: survivor,
+                        departedFingerWasLeft: !survivor.isLeft,
+                        since: frame.timestamp,
+                        startedClose: splitFingersStartedCloseEnough()
+                    )
                 } else {
                     pendingSplitTap = nil
                 }
@@ -352,14 +389,22 @@ public final class GestureRecognizer {
                 }
             } else {
                 if !hasFiredSwipeThisGesture, let ref = referenceCentroid {
-                    if let kind = splitSwipeKind(touching: touching) {
+                    switch splitSwipeKind(touching: touching) {
+                    case .recognized(let kind):
                         hasFiredSwipeThisGesture = true
                         lastTapTime = nil
                         lastTapCentroid = nil
                         lastTapFingerCount = nil
                         if debugLoggingEnabled { NSLog("InputCustomizer: recognized split swipe \(kind.rawValue)") }
                         onGesture?(kind)
-                    } else {
+                    case .matchedButGated:
+                        // Consume the gesture without firing anything —
+                        // see SplitSwipeMatch.matchedButGated's doc
+                        // comment for why this must not fall through to
+                        // the ordinary swipe check below.
+                        hasFiredSwipeThisGesture = true
+                        if debugLoggingEnabled { NSLog("InputCustomizer: split swipe shape matched but fingers started too far apart — suppressed") }
+                    case .noMatch:
                         let dx = centroid.x - ref.x
                         let dy = centroid.y - ref.y
                         // Direction (and so `kind`) only depends on the
@@ -445,6 +490,7 @@ public final class GestureRecognizer {
         defer {
             activeFingerCount = 0
             touchingLock.withLock { $0 = false }
+            positionLock.withLock { $0 = nil }
             referenceCentroid = nil
             lastCentroid = nil
             gestureStartTime = nil
@@ -613,6 +659,7 @@ public final class GestureRecognizer {
     /// MultitouchSupport identifier.
     private func resolvePendingSplitTap(touching: [MultitouchGestureEngine.Touch], timestamp: TimeInterval) -> GestureKind? {
         guard let pending = pendingSplitTap, touching.count == 2 else { return nil }
+        guard pending.startedClose else { return nil }
         guard timestamp - pending.since < splitTapMaxInterval else { return nil }
         let anchorStillPresent = touching.contains {
             hypot($0.position.x - pending.anchor.position.x, $0.position.y - pending.anchor.position.y) < splitTapAnchorMaxMovement
@@ -627,17 +674,31 @@ public final class GestureRecognizer {
     /// position (`splitReferences`) rather than the shared centroid —
     /// centroid travel alone can't tell "both fingers moved together" from
     /// "only one moved", since a single moving finger still shifts the
-    /// average. Returns `nil` if there's no current anchor+mover pattern
-    /// (both currently-touching ids must have a reference, one within
-    /// `splitAnchorMaxMovement` and the other past `swipeDistanceThreshold`
-    /// on a predominantly vertical path) — the caller falls back to the
-    /// ordinary centroid-based `swipeKind` check in that case.
-    private func splitSwipeKind(touching: [MultitouchGestureEngine.Touch]) -> GestureKind? {
-        guard touching.count == 2, splitReferences.count == 2 else { return nil }
+    /// average.
+    private enum SplitSwipeMatch {
+        /// A clean anchor+mover pattern, close enough together to count.
+        case recognized(GestureKind)
+        /// The anchor+mover *shape* matched (one finger held still, the
+        /// other swiped a qualifying vertical distance), but the two
+        /// fingers started further apart than `maxSplitGestureFingerDistanceMM`
+        /// allows. Deliberately distinct from `.noMatch`: the caller must
+        /// NOT fall back to the ordinary centroid-based swipe check here —
+        /// centroid travel alone can't tell "both fingers moved" from
+        /// "only one moved either", so falling back would just fire an
+        /// un-split `twoFingerSwipeUp`/`Down` from the same single-finger
+        /// movement, defeating the whole point of the proximity gate.
+        case matchedButGated
+        /// No anchor+mover pattern at all — the caller should fall back
+        /// to the ordinary centroid-based `swipeKind` check.
+        case noMatch
+    }
+
+    private func splitSwipeKind(touching: [MultitouchGestureEngine.Touch]) -> SplitSwipeMatch {
+        guard touching.count == 2, splitReferences.count == 2 else { return .noMatch }
         var anchor: FingerReference?
         var mover: (ref: FingerReference, dx: CGFloat, dy: CGFloat)?
         for touch in touching {
-            guard let ref = splitReferences[touch.id] else { return nil }
+            guard let ref = splitReferences[touch.id] else { return .noMatch }
             let dx = touch.position.x - ref.position.x
             let dy = touch.position.y - ref.position.y
             if hypot(dx, dy) < splitAnchorMaxMovement {
@@ -649,14 +710,30 @@ public final class GestureRecognizer {
         // Direction only depends on angle, resolved before the magnitude
         // check below so it can use this specific kind's own threshold
         // (per-rule sensitivity override, if any).
-        guard anchor != nil, let mover else { return nil }
+        guard anchor != nil, let mover else { return .noMatch }
         let direction = Self.direction(dx: mover.dx, dy: mover.dy)
-        guard direction == .up || direction == .down else { return nil }
+        guard direction == .up || direction == .down else { return .noMatch }
         let side = mover.ref.isLeft ? "Left" : "Right"
         let vertical = direction == .up ? "Up" : "Down"
         guard let kind = GestureKind(rawValue: "twoFinger\(side)Swipe\(vertical)"),
-              hypot(mover.dx, mover.dy) > swipeDistanceThreshold(for: kind) else { return nil }
-        return kind
+              hypot(mover.dx, mover.dy) > swipeDistanceThreshold(for: kind) else { return .noMatch }
+        guard splitFingersStartedCloseEnough() else { return .matchedButGated }
+        return .recognized(kind)
+    }
+
+    /// Whether the two fingers currently in `splitReferences` started
+    /// close enough together (per `surfaceSizeMM`/
+    /// `maxSplitGestureFingerDistanceMM`) for a split-swipe/split-tap to
+    /// be eligible at all. `true` whenever `surfaceSizeMM` is unset (or
+    /// there aren't exactly 2 references to compare) — the gate is
+    /// opt-in, matching `minimumFingerSeparation`'s default-off
+    /// convention above.
+    private func splitFingersStartedCloseEnough() -> Bool {
+        guard let surfaceSizeMM, splitReferences.count == 2 else { return true }
+        let positions: [CGPoint] = splitReferences.values.map(\.position)
+        let dx = (positions[0].x - positions[1].x) * surfaceSizeMM.width
+        let dy = (positions[0].y - positions[1].y) * surfaceSizeMM.height
+        return hypot(dx, dy) <= maxSplitGestureFingerDistanceMM
     }
 
     /// 8 compass directions, ordered to match `Int((angle + 22.5) / 45) % 8`

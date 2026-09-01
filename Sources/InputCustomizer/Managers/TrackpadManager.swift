@@ -91,10 +91,17 @@ final class TrackpadManager {
         wire(recognizer: trackpadRecognizer, device: .trackpad, repeatSession: trackpadRepeatSession)
         wire(recognizer: magicMouseRecognizer, device: .magicMouse, repeatSession: magicMouseRepeatSession)
 
+        // Physically measured with a ruler (Apple doesn't publish trackpad
+        // glass dimensions) on a 14" MacBook Pro — only meaningful for the
+        // trackpad, not Magic Mouse, whose shell is a different size and
+        // shape entirely. See GestureRecognizer.surfaceSizeMM's doc
+        // comment. A different Mac model's trackpad would need its own
+        // measurement; this isn't derived from the model programmatically.
+        trackpadRecognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+
         trackpadEngine.onFrame = { [weak self] frame in
             // Runs on MultitouchSupport's own callback thread, not main —
             // see MultitouchGestureEngine.onFrame's doc comment.
-            TrackpadManager.logFingerDistanceForCalibration(frame)
             self?.trackpadRecognizer.process(frame)
             self?.publishToVisualizer(frame, device: .trackpad)
         }
@@ -240,36 +247,6 @@ final class TrackpadManager {
         case .none:
             break
         }
-    }
-
-    // MARK: - TEMPORARY: finger-distance calibration
-    //
-    // Figures out what unit MTTouch's `absoluteVector` is actually in, by
-    // comparing it against `normalizedVector` while two fingers are a
-    // physically-known distance apart on the trackpad. Once that's
-    // confirmed, this becomes the basis for a real mm-based proximity
-    // threshold (e.g. "only fire this split-swipe/split-tap gesture when
-    // the two fingers are within 5mm") — see GestureRecognizer's
-    // `hasImplausiblyClosePair`, which already does the equivalent check
-    // in normalized units for palm rejection, but normalized units alone
-    // can't express a real "5mm" without knowing the exact trackpad's
-    // physical width, which varies by Mac model.
-    //
-    // DELETE this whole method (and its call site in trackpadEngine.onFrame
-    // above) once the unit is confirmed and a real threshold is wired up.
-    // Kept identical to the same temporary addition in InputCustomizerLite.
-    private static var lastCalibrationLogTime: TimeInterval = 0
-
-    private static func logFingerDistanceForCalibration(_ frame: MultitouchGestureEngine.Frame) {
-        let touching = frame.touches.filter { $0.state == 3 || $0.state == 4 }
-        guard touching.count == 2 else { return }
-        guard frame.timestamp - lastCalibrationLogTime > 0.5 else { return } // throttle to 2/sec
-        lastCalibrationLogTime = frame.timestamp
-
-        let a = touching[0], b = touching[1]
-        let normalizedDistance = hypot(a.position.x - b.position.x, a.position.y - b.position.y)
-        let absoluteDistance = hypot(a.absolutePosition.x - b.absolutePosition.x, a.absolutePosition.y - b.absolutePosition.y)
-        NSLog("InputCustomizer: [calibration] 2 fingers — normalized distance=\(normalizedDistance), absolute distance=\(absoluteDistance)")
     }
 }
 
