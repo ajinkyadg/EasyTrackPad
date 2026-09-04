@@ -540,6 +540,24 @@ struct KeyCaptureField: View {
             Button(isRecording ? "Cancel" : "Record") {
                 isRecording ? stopRecording() : startRecording()
             }
+            // Some shortcuts (Mission Control, Spaces, Spotlight, the app
+            // switcher, screenshots…) are consumed by macOS itself before
+            // a local key monitor ever sees the press, so "Record" can
+            // never capture them — this sets them directly instead.
+            Menu {
+                ForEach(KeyCodeMap.presetShortcuts) { preset in
+                    Button(preset.name) {
+                        stopRecording()
+                        keyCode = preset.keyCode
+                        modifiers = preset.modifiers
+                    }
+                }
+            } label: {
+                Image(systemName: "list.bullet")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Pick a shortcut that macOS intercepts before it can be recorded")
         }
         .onDisappear { stopRecording() }
     }

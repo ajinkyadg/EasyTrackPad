@@ -48,4 +48,32 @@ public enum KeyCodeMap {
         guard keyCode != unset else { return "Not set" }
         return symbols(forModifiers: modifiers) + label(forKeyCode: keyCode)
     }
+
+    /// A ready-made keyCode+modifiers pair for a shortcut that `KeyCaptureField`'s
+    /// "Record" button can't capture by pressing it — macOS's WindowServer
+    /// intercepts these (Mission Control, Spaces switching, Spotlight, the
+    /// app switcher, screenshots…) and acts on them directly, so the
+    /// keypress never reaches any app's event monitor, local or global.
+    /// Picking one from the menu here sets the same keyCode/modifiers a
+    /// successful recording would have produced.
+    public struct PresetShortcut: Identifiable {
+        public let name: String
+        public let keyCode: UInt16
+        public let modifiers: UInt
+        public var id: String { name }
+    }
+
+    public static let presetShortcuts: [PresetShortcut] = [
+        PresetShortcut(name: "Mission Control (⌃↑)", keyCode: 126, modifiers: NSEvent.ModifierFlags.control.rawValue),
+        PresetShortcut(name: "Application Windows (⌃↓)", keyCode: 125, modifiers: NSEvent.ModifierFlags.control.rawValue),
+        PresetShortcut(name: "Move Left a Space (⌃←)", keyCode: 123, modifiers: NSEvent.ModifierFlags.control.rawValue),
+        PresetShortcut(name: "Move Right a Space (⌃→)", keyCode: 124, modifiers: NSEvent.ModifierFlags.control.rawValue),
+        PresetShortcut(name: "Show Desktop (F11)", keyCode: 103, modifiers: 0),
+        PresetShortcut(name: "Spotlight (⌘Space)", keyCode: 49, modifiers: NSEvent.ModifierFlags.command.rawValue),
+        PresetShortcut(name: "App Switcher (⌘Tab)", keyCode: 48, modifiers: NSEvent.ModifierFlags.command.rawValue),
+        PresetShortcut(name: "Screenshot: Full Screen (⌘⇧3)", keyCode: 20, modifiers: NSEvent.ModifierFlags([.command, .shift]).rawValue),
+        PresetShortcut(name: "Screenshot: Selection (⌘⇧4)", keyCode: 21, modifiers: NSEvent.ModifierFlags([.command, .shift]).rawValue),
+        PresetShortcut(name: "Screenshot: Options (⌘⇧5)", keyCode: 23, modifiers: NSEvent.ModifierFlags([.command, .shift]).rawValue),
+        PresetShortcut(name: "Lock Screen (⌃⌘Q)", keyCode: 12, modifiers: NSEvent.ModifierFlags([.control, .command]).rawValue)
+    ]
 }
