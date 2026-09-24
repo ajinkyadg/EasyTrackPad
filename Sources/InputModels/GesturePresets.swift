@@ -129,13 +129,12 @@ public enum GesturePresets {
             action: .remapToKey(keyCode: 30, modifiers: commandModifier) // "]" + Command
         ),
 
-        // A real trackpad has no Force Touch pressure sensor read here
-        // either (this app doesn't read pressure at all — see
-        // MouseCorner), so this stands in for it: an ordinary click, only
-        // counted if a finger was resting near the top-right corner of
-        // the surface at the time. Button 0 = left click/tap-to-click.
+        // A trackpad corner click: one finger lands in the top-right
+        // corner and clicks straight away (see resolveCornerClick). The
+        // click itself is swallowed, so nothing under the pointer is
+        // clicked. Button 0 = the primary click.
         RulePreset(
-            name: "Close Tab (Top-Right Corner Click)",
+            name: "Close Tab (Top-Right Trackpad Corner Click)",
             device: .trackpad,
             trigger: .mouseCornerClick(corner: .topRight, number: 0, modifiers: 0),
             action: .remapToKey(keyCode: 13, modifiers: commandModifier) // "W" + Command
@@ -270,23 +269,11 @@ public enum GesturePresets {
             trigger: .trackpadGesture(.rotateCounterClockwise),
             action: .remapToKey(keyCode: 6, modifiers: commandModifier) // "Z" + Command
         ),
-        // The 3 remaining corners (Top-Right is "Close Tab" above) as
-        // quick media controls — a corner tap works well for "reach over
-        // without looking" actions like skipping a track.
+        // The other top corner. Bottom corners are deliberately absent:
+        // the bottom edge is where ordinary clicks land, and it's where
+        // macOS's own "secondary click in corner" setting lives.
         RulePreset(
-            name: "Previous Track (Bottom-Left Corner Click)",
-            device: .trackpad,
-            trigger: .mouseCornerClick(corner: .bottomLeft, number: 0, modifiers: 0),
-            action: .sendMediaKey(.previousTrack)
-        ),
-        RulePreset(
-            name: "Next Track (Bottom-Right Corner Click)",
-            device: .trackpad,
-            trigger: .mouseCornerClick(corner: .bottomRight, number: 0, modifiers: 0),
-            action: .sendMediaKey(.nextTrack)
-        ),
-        RulePreset(
-            name: "Mute (Top-Left Corner Click)",
+            name: "Mute (Top-Left Trackpad Corner Click)",
             device: .trackpad,
             trigger: .mouseCornerClick(corner: .topLeft, number: 0, modifiers: 0),
             action: .sendMediaKey(.mute)

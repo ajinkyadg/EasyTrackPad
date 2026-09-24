@@ -29,17 +29,6 @@ final class CustomizationRuleTests: XCTestCase {
         XCTAssertEqual(rule, decoded)
     }
 
-    func testMouseCornerResolveOnlyMatchesNearACornerNotTheMiddleOrAnEdge() {
-        XCTAssertEqual(MouseCorner.resolve(from: CGPoint(x: 0.05, y: 0.95)), .topLeft)
-        XCTAssertEqual(MouseCorner.resolve(from: CGPoint(x: 0.95, y: 0.95)), .topRight)
-        XCTAssertEqual(MouseCorner.resolve(from: CGPoint(x: 0.05, y: 0.05)), .bottomLeft)
-        XCTAssertEqual(MouseCorner.resolve(from: CGPoint(x: 0.95, y: 0.05)), .bottomRight)
-
-        XCTAssertNil(MouseCorner.resolve(from: CGPoint(x: 0.5, y: 0.5)), "dead center isn't near any corner")
-        XCTAssertNil(MouseCorner.resolve(from: CGPoint(x: 0.05, y: 0.5)), "near the left edge, but not top or bottom")
-        XCTAssertNil(MouseCorner.resolve(from: CGPoint(x: 0.5, y: 0.95)), "near the top edge, but not left or right")
-    }
-
     /// `RulePreset.id == name` (see its doc comment) — a duplicate name
     /// would mean two presets silently collide as the same `Identifiable`
     /// item in the "Add from Preset" list. Guards against exactly the

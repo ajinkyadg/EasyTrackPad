@@ -38,14 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private lazy var keyboardManager = KeyboardManager(settingsStore: settingsStore, activityLog: activityLog)
     private lazy var trackpadManager = TrackpadManager(settingsStore: settingsStore, visualizerModel: touchVisualizerModel, activityLog: activityLog)
-    // Reads TrackpadManager's live touch position to gate corner-click
-    // rules (see MouseManager.matchDescription) — `trackpadManager` is
+    // Reads TrackpadManager's per-finger touch history to decide corner
+    // clicks (see MouseManager.matchCornerClick) — `trackpadManager` is
     // also `lazy`, so this closure is safe to capture it before it's been
     // instantiated; it only runs once both are up.
     private lazy var mouseManager = MouseManager(
         settingsStore: settingsStore,
         activityLog: activityLog,
-        lastTouchPosition: { [weak self] in self?.trackpadManager.lastTouchPosition ?? nil }
+        touchSnapshot: { [weak self] in self?.trackpadManager.touchSnapshot }
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {

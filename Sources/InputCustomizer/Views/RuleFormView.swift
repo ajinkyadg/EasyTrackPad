@@ -406,8 +406,8 @@ struct RuleFormView: View {
                         .tag(TrackpadTriggerOption.gesture(kind))
                 }
             }
-            Section("Corner clicks") {
-                ForEach(MouseCorner.allCases) { corner in
+            Section("Trackpad corner clicks") {
+                ForEach(offeredCorners) { corner in
                     Label { Text(corner.displayName) } icon: { MouseCornerGlyphRenderer.image(for: corner) }
                         .tag(TrackpadTriggerOption.cornerClick(corner))
                 }
@@ -446,9 +446,11 @@ struct RuleFormView: View {
         if case let .cornerClick(selectedCorner) = trackpadTriggerOption.wrappedValue {
             let isNearSelectedCorner = currentCornerHint == selectedCorner
             Label {
-                Text(isNearSelectedCorner
-                    ? "A finger is resting near \(selectedCorner.displayName.lowercased()) right now — that’s where a click needs to land."
-                    : "Rest a finger near \(selectedCorner.displayName.lowercased()) (shown on the right) to confirm it’s being detected.")
+                Text(!CornerZoneSpec.builtInTrackpad.allowed.contains(selectedCorner)
+                    ? "Bottom corners no longer trigger rules — that’s where ordinary clicks land. Pick a top corner."
+                    : isNearSelectedCorner
+                    ? "One finger is in the \(selectedCorner.displayName.lowercased()) — click now to try it."
+                    : "Put one finger down in the \(selectedCorner.displayName.lowercased()) and click straight away. The click itself won’t reach the app under the pointer.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -461,18 +463,23 @@ struct RuleFormView: View {
 
     private static let touchingStates: Set<Int32> = [3, 4]
 
-    /// Which corner (if any) the centroid of currently-touching fingers
-    /// is near, using the exact same resolution `MouseManager` uses for
-    /// a real corner-click rule (`MouseCorner.resolve`) — just fed from
-    /// the Live Preview's already-published touch data instead of
-    /// `TrackpadManager.lastTouchPosition`, since this in-progress rule
-    /// isn't saved for that path to see yet.
+    /// Only the top corners work (see `CornerZoneSpec.allowed`). A rule
+    /// saved with a bottom corner by an older version stays selectable
+    /// so editing it doesn't silently change its trigger.
+    private var offeredCorners: [MouseCorner] {
+        var corners = MouseCorner.allCases.filter { CornerZoneSpec.builtInTrackpad.allowed.contains($0) }
+        if touchDeviceTriggerKind == .clickCorner, !corners.contains(mouseCorner) { corners.append(mouseCorner) }
+        return corners
+    }
+
+    /// Which corner zone a *single* resting finger is in — the same zone
+    /// `resolveCornerClick` uses, fed from the Live Preview's touch data
+    /// since this in-progress rule isn't saved yet. Two or more fingers
+    /// never count, matching the real rule.
     private var currentCornerHint: MouseCorner? {
         let touching = visualizerModel.touches.filter { Self.touchingStates.contains($0.state) }
-        guard !touching.isEmpty else { return nil }
-        let sum = touching.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.position.x, y: $0.y + $1.position.y) }
-        let centroid = CGPoint(x: sum.x / CGFloat(touching.count), y: sum.y / CGFloat(touching.count))
-        return MouseCorner.resolve(from: centroid)
+        guard touching.count == 1, let finger = touching.first else { return nil }
+        return cornerZone(containing: finger.position, surface: CornerZoneSpec.builtInTrackpadSizeMM, zone: CornerZoneSpec.builtInTrackpad.sizeMM)
     }
 
     /// `.magicMouse`'s trigger fields: a separate "Trigger" choice
@@ -488,7 +495,7 @@ struct RuleFormView: View {
         if showsGestureFields {
             Picker("Gesture", selection: $gesture) {
                 ForEach(Trigger.GestureKind.allCases, id: \.self) { kind in
-                    Label { Text(kind.displayName) } icon: { GestureGlyphRenderer.image(for: kind) }
+                    Label { Text(kind.displayName) } icon: { GestureGlyphRenderer.image(for: kind, surface: .mouse) }
                         .tag(kind)
                 }
             }

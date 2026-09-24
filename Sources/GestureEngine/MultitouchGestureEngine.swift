@@ -80,6 +80,13 @@ public final class MultitouchGestureEngine {
     /// service internally.
     private var matchedService: io_service_t = 0
 
+    /// `true` only when the running device was matched as the Mac's own
+    /// "MT Built-In" trackpad — not the `MTDeviceCreateDefault()` fallback,
+    /// which on a desktop Mac is a Magic Trackpad of a different size.
+    /// Anything measured in mm (corner clicks) must not assume the built-in
+    /// pad's dimensions unless this is set.
+    public private(set) var isBoundToBuiltIn = false
+
     public init() {}
 
     /// Returns whether a multitouch device was actually found and started —
@@ -99,6 +106,7 @@ public final class MultitouchGestureEngine {
                 return startFallback(for: preference)
             }
             matchedService = service
+            isBoundToBuiltIn = preference == .builtIn
             return start(withDevice: device)
         }
         return startFallback(for: preference)
@@ -162,6 +170,7 @@ public final class MultitouchGestureEngine {
         MTDeviceRelease(device)
         MultitouchGestureEngine.registry[device] = nil
         self.device = nil
+        isBoundToBuiltIn = false
         if matchedService != 0 {
             IOObjectRelease(matchedService)
             matchedService = 0

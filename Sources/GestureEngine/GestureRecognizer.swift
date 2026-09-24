@@ -31,15 +31,9 @@ public final class GestureRecognizer {
     public var isTouching: Bool { touchingLock.withLock { $0 } }
     private let touchingLock = OSAllocatedUnfairLock(initialState: false)
 
-    /// Cross-thread-safe snapshot of the last known centroid position
-    /// (normalized 0...1) while at least one finger was touching. Read by
-    /// `MouseManager` to gate corner-click rules — "was a finger resting
-    /// near this corner when the physical click happened" — a rare,
-    /// one-shot read triggered by a click event, not a per-frame one, so
-    /// (same reasoning as `isTouching` above) it needs a real lock rather
-    /// than a benign race.
-    public var lastTouchPosition: CGPoint? { positionLock.withLock { $0 } }
-    private let positionLock = OSAllocatedUnfairLock<CGPoint?>(initialState: nil)
+    // No centroid position is published for corner clicks any more: they
+    // need per-finger landing history (see TouchSnapshotTracker in
+    // CornerClick.swift), and a centroid gate fires on resting thumbs.
 
     /// Verbose per-gesture NSLog output for diagnosing "nothing happens" /
     /// "misfiring" reports, since finger-count gestures can't be exercised
@@ -586,7 +580,6 @@ public final class GestureRecognizer {
             lastFrameTimestamp = frame.timestamp
             activeFingerCount = count
             touchingLock.withLock { $0 = true }
-            positionLock.withLock { $0 = centroid }
             return
         }
 
@@ -601,7 +594,6 @@ public final class GestureRecognizer {
         defer {
             activeFingerCount = 0
             touchingLock.withLock { $0 = false }
-            positionLock.withLock { $0 = nil }
             referenceCentroid = nil
             lastCentroid = nil
             gestureStartTime = nil

@@ -48,12 +48,11 @@ final class TrackpadManager {
 
     private var cancellables: Set<AnyCancellable> = []
 
-    /// Last known finger position on the *trackpad* surface — `MouseManager`
-    /// reads this to gate corner-click rules, which only ever apply to
-    /// `.trackpad` (see `InputDevice.magicMouse`'s doc comment). See
-    /// `GestureRecognizer.lastTouchPosition`'s doc comment for the
-    /// thread-safety reasoning.
-    var lastTouchPosition: CGPoint? { trackpadRecognizer.lastTouchPosition }
+    /// Per-finger landing/travel history on the *trackpad* surface, which
+    /// `MouseManager` reads to decide trackpad corner clicks (see
+    /// `resolveCornerClick`). Magic Mouse has no corner clicks.
+    private let trackpadTouchTracker = TouchSnapshotTracker()
+    var touchSnapshot: TouchSnapshot? { trackpadTouchTracker.snapshot() }
 
     init(settingsStore: SettingsStore, visualizerModel: TouchVisualizerModel, activityLog: ActivityLog) {
         self.settingsStore = settingsStore
@@ -97,7 +96,7 @@ final class TrackpadManager {
         // shape entirely. See GestureRecognizer.surfaceSizeMM's doc
         // comment. A different Mac model's trackpad would need its own
         // measurement; this isn't derived from the model programmatically.
-        trackpadRecognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        trackpadRecognizer.surfaceSizeMM = CornerZoneSpec.builtInTrackpadSizeMM
         // Diagnostic: shows the real measured finger distance in the
         // Console view whenever a split-swipe's shape matched but was
         // gated for exceeding the ceiling above — lets it get tuned
@@ -121,6 +120,7 @@ final class TrackpadManager {
             // Runs on MultitouchSupport's own callback thread, not main —
             // see MultitouchGestureEngine.onFrame's doc comment.
             self?.trackpadRecognizer.process(frame)
+            self?.trackpadTouchTracker.process(frame)
             self?.publishToVisualizer(frame, device: .trackpad)
         }
         magicMouseEngine.onFrame = { [weak self] frame in
@@ -146,6 +146,12 @@ final class TrackpadManager {
             .store(in: &cancellables)
 
         let trackpadAvailable = trackpadEngine.start(preferring: .builtIn)
+        // Corner clicks are measured in mm, so they only get a surface size
+        // when the device really is the built-in pad it was measured on.
+        trackpadTouchTracker.surfaceSizeMM = CornerZoneSpec.surfaceMM(engineBoundToBuiltIn: trackpadEngine.isBoundToBuiltIn)
+        activityLog.log(.info, trackpadEngine.isBoundToBuiltIn
+            ? "Corner clicks: built-in trackpad, 130×80mm"
+            : "Corner clicks off: trackpad size unknown (not the built-in trackpad)")
         let magicMouseAvailable = magicMouseEngine.start(preferring: .external)
         visualizerModel.setMultitouchAvailable(trackpad: trackpadAvailable, magicMouse: magicMouseAvailable)
         activityLog.log(.info, "Trackpad multitouch \(trackpadAvailable ? "available" : "unavailable"); Magic Mouse multitouch \(magicMouseAvailable ? "available" : "unavailable")")
@@ -213,6 +219,9 @@ final class TrackpadManager {
         monitors.removeAll()
         trackpadEngine.stop()
         magicMouseEngine.stop()
+        // A finger still "down" in a stopped engine must not keep matching
+        // corner clicks forever.
+        trackpadTouchTracker.reset()
         trackpadRepeatSession.stopRepeating()
         magicMouseRepeatSession.stopRepeating()
     }
