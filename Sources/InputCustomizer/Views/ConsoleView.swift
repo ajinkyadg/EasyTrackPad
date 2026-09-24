@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Live, color-coded activity feed — the in-app replacement for having to
-/// run the binary from a terminal to see `NSLog` output. Fed by
-/// `ActivityLog`, which every manager writes to on an actual gesture/key/
-/// button match (never on every raw event — see each manager's `handle`
-/// for why that matters, especially for keyboard).
+/// Live activity feed — the in-app replacement for having to run the
+/// binary from a terminal to see `NSLog` output. Fed by `ActivityLog`,
+/// which every manager writes to on an actual gesture/key/button match
+/// (never on every raw event — see each manager's `handle` for why that
+/// matters, especially for keyboard). Hidden by default; shown as a
+/// trailing pane from the settings window's "Activity" toolbar toggle.
 struct ConsoleView: View {
     @EnvironmentObject var activityLog: ActivityLog
 
@@ -17,62 +18,102 @@ struct ConsoleView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Console").font(.headline)
+                Text("Activity").font(.headline)
                 Spacer()
-                Button("Clear") { activityLog.clear() }
-                    .font(.caption)
-                    .disabled(activityLog.entries.isEmpty)
+                Button {
+                    activityLog.clear()
+                } label: {
+                    Label("Clear", systemImage: "trash")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .disabled(activityLog.entries.isEmpty)
+                .help("Clear activity")
+                .accessibilityLabel("Clear activity")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
             Divider()
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 3) {
-                        if activityLog.entries.isEmpty {
-                            Text("Perform a gesture, key combo, or mouse button to see it here.")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                                .padding(12)
+            if activityLog.entries.isEmpty {
+                emptyState
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(activityLog.entries) { entry in
+                                entryRow(entry).id(entry.id)
+                            }
                         }
-                        ForEach(activityLog.entries) { entry in
-                            entryRow(entry).id(entry.id)
-                        }
+                        .padding(12)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                }
-                .onChange(of: activityLog.entries.last?.id) { lastID in
-                    guard let lastID else { return }
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(lastID, anchor: .bottom)
+                    .onChange(of: activityLog.entries.last?.id) { lastID in
+                        guard let lastID else { return }
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            proxy.scrollTo(lastID, anchor: .bottom)
+                        }
                     }
                 }
             }
         }
-        .background(Color.black.opacity(0.03))
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "waveform.path.ecg")
+                .font(.title)
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            Text("No activity yet")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text("Perform a gesture, key combo, or mouse click to see it here.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
     private func entryRow(_ entry: ActivityLog.Entry) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text(Self.timeFormatter.string(from: entry.timestamp))
-                .foregroundStyle(.tertiary)
-            Text(entry.kind.rawValue + ":")
-                .foregroundStyle(color(for: entry.kind))
-                .fontWeight(.semibold)
-            Text(entry.message)
-                .foregroundStyle(.primary)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: symbol(for: entry.kind))
+                .foregroundStyle(tint(for: entry.kind))
+                .frame(width: 16)
+                .help(entry.kind.rawValue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.message)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("\(entry.kind.rawValue) · \(Self.timeFormatter.string(from: entry.timestamp))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
-        .font(.system(size: 11, design: .monospaced))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .textSelection(.enabled)
+        .accessibilityElement(children: .combine)
     }
 
-    private func color(for kind: ActivityLog.Kind) -> Color {
+    /// The symbol shape — not just its color — distinguishes each kind,
+    /// so the feed still reads correctly for color-blind users.
+    private func symbol(for kind: ActivityLog.Kind) -> String {
         switch kind {
-        case .detected: return .blue
+        case .detected: return "hand.point.up.left"
+        case .fired: return "bolt"
+        case .executing: return "play.circle"
+        case .info: return "info.circle"
+        }
+    }
+
+    private func tint(for kind: ActivityLog.Kind) -> Color {
+        switch kind {
+        case .detected: return .accentColor
         case .fired: return .orange
         case .executing: return .green
         case .info: return .secondary

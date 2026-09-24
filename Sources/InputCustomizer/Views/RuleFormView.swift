@@ -34,7 +34,7 @@ struct RuleFormView: View {
     @State private var repeatsWhileHeld: Bool
     @State private var repeatsByDistance: Bool
     @State private var restrictedToApps: [AppReference]
-    // Each of the four global sensitivity/repeat sliders (Preferences)
+    // Each of the four global sensitivity/repeat sliders (Gesture Tuning)
     // can be overridden per rule instead — an `Enabled` flag plus a
     // bound `Value` rather than a single `Double?`, since a Slider needs
     // a concrete non-optional binding regardless of whether the override
@@ -48,14 +48,30 @@ struct RuleFormView: View {
     @State private var repeatDelayOverrideValue: Double
     @State private var repeatByDistanceSensitivityOverrideEnabled: Bool
     @State private var repeatByDistanceSensitivityOverrideValue: Double
+    /// Starts expanded only when the rule already uses an override, so
+    /// existing customizations are never hidden behind a closed disclosure.
+    @State private var showsAdvanced: Bool
 
+    /// Picker order runs from most common to most powerful — the shell
+    /// command sits last since it's the one action that warrants a
+    /// warning.
     enum ActionKind: String, CaseIterable, Identifiable {
+        case remapToKey = "Keyboard shortcut"
+        case mediaKey = "Media key"
         case missionControl = "Mission Control"
-        case shellCommand = "Run Shell Command"
-        case launchApp = "Launch App"
-        case mediaKey = "Media Key"
-        case remapToKey = "Remap to Key"
+        case launchApp = "Open app"
+        case shellCommand = "Run shell command"
         var id: String { rawValue }
+
+        var systemImage: String {
+            switch self {
+            case .remapToKey: return "command"
+            case .mediaKey: return "playpause"
+            case .missionControl: return "rectangle.3.group"
+            case .launchApp: return "app"
+            case .shellCommand: return "terminal"
+            }
+        }
     }
 
     /// Shared by `.trackpad` and `.magicMouse` — both have a touch
@@ -74,9 +90,9 @@ struct RuleFormView: View {
     /// generic mouse click is physically meaningless (`MouseCorner
     /// .resolve` would always return `nil` with no touch surface to read).
     enum TouchDeviceTriggerKind: String, CaseIterable, Identifiable {
-        case gesture = "Multi-Touch Gesture"
-        case clickAnywhere = "Click Anywhere"
-        case clickCorner = "Click in Corner"
+        case gesture = "Multi-touch gesture"
+        case clickAnywhere = "Click anywhere"
+        case clickCorner = "Click in corner"
         var id: String { rawValue }
     }
 
@@ -178,7 +194,7 @@ struct RuleFormView: View {
 
         static func from(preset: RulePreset) -> FormValues {
             from(rule: CustomizationRule(
-                name: preset.name,
+                name: preset.ruleName,
                 device: preset.device,
                 trigger: preset.trigger,
                 action: preset.action,
@@ -238,6 +254,10 @@ struct RuleFormView: View {
         _repeatDelayOverrideValue = State(initialValue: values.repeatDelayOverride ?? 0.3)
         _repeatByDistanceSensitivityOverrideEnabled = State(initialValue: values.repeatByDistanceSensitivityOverride != nil)
         _repeatByDistanceSensitivityOverrideValue = State(initialValue: values.repeatByDistanceSensitivityOverride ?? 0.5)
+        _showsAdvanced = State(initialValue: values.sensitivityOverride != nil
+            || values.repeatIntervalOverride != nil
+            || values.repeatDelayOverride != nil
+            || values.repeatByDistanceSensitivityOverride != nil)
     }
 
     /// `.trackpad` and `.magicMouse` both configure `.trackpadGesture`
@@ -269,99 +289,124 @@ struct RuleFormView: View {
     private var canSave: Bool {
         if device == .keyboard && keyCode == KeyCodeMap.unset { return false }
         if actionKind == .remapToKey && remapKeyCode == KeyCodeMap.unset { return false }
+        // An empty command or no chosen app would save a rule that
+        // silently does nothing (or errors) every time it fires.
+        if actionKind == .shellCommand && shellCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+        if actionKind == .launchApp && bundleIdentifier.isEmpty { return false }
         return true
     }
 
+    private var formTitle: String {
+        if editingRule != nil { return "Edit Rule" }
+        return "New \(device.displayName) Rule"
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if usesWideLayout {
                 // Controls on the left, a live touch preview on the
-                // right — one visual element, not two. An earlier version
-                // paired this with a static hand-illustration "Preview"
-                // panel above the controls; that made the sheet taller
-                // than the window (Form doesn't auto-scroll on macOS) and
-                // read as cluttered. Dropping it and letting the sheet
-                // size itself to this shorter content fixes both without
-                // needing a ScrollView.
-                HStack(alignment: .top, spacing: 24) {
-                    Form {
-                        nameField
-                        if device == .trackpad {
-                            trackpadTriggerFields
-                        } else {
-                            magicMouseTriggerFields
-                        }
-                        actionFields
-                        appScopeFields
-                    }
-                    .frame(width: 300)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Live Preview").font(.headline)
+                // right — one visual element, not two. The grouped Form
+                // scrolls on its own, so the sheet can stay a fixed size
+                // however many conditional rows are showing.
+                HStack(alignment: .top, spacing: 0) {
+                    form
+                    Divider()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Live preview").font(.headline)
                         TouchVisualizerView(selectedGesture: $gesture, device: device)
+                        Text("Trying a gesture here also runs any rule already assigned to it. Pause all rules first if you don’t want that.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(width: 348)
+                    .padding(20)
                 }
-                .padding()
             } else {
-                Form {
-                    nameField
-                    switch device {
-                    case .mouse:
-                        // No touch surface, so no corner-click option here
-                        // — see TouchDeviceTriggerKind's doc comment for
-                        // where that lives instead.
-                        Stepper("Button number: \(mouseButtonNumber)", value: $mouseButtonNumber, in: 0...31)
-                    case .keyboard:
-                        LabeledContent("Key combo") {
-                            KeyCaptureField(keyCode: $keyCode, modifiers: $keyModifiers)
-                        }
-                    case .trackpad, .magicMouse:
-                        EmptyView() // handled above
-                    }
-                    actionFields
-                    appScopeFields
-                }
-                .padding()
+                form
             }
-
-            Divider()
-
-            HStack {
-                Spacer()
+        }
+        .frame(width: usesWideLayout ? 800 : 480, height: usesWideLayout ? 580 : 500)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
-                Button(editingRule == nil ? "Add" : "Save") { save() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(editingRule == nil ? "Add Rule" : "Save") { save() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSave)
             }
-            .padding()
         }
-        .frame(
-            minWidth: usesWideLayout ? 700 : 420,
-            maxWidth: usesWideLayout ? .infinity : 420
-        )
     }
 
-    @ViewBuilder private var nameField: some View {
-        TextField("Name", text: $name)
+    private var form: some View {
+        Form {
+            Section {
+                TextField("Name", text: $name, prompt: Text("Optional — named after its action"))
+            } header: {
+                Text(formTitle).font(.title3.weight(.semibold))
+            }
+
+            Section("Trigger") {
+                switch device {
+                case .trackpad:
+                    trackpadTriggerFields
+                case .magicMouse:
+                    magicMouseTriggerFields
+                case .mouse:
+                    // No touch surface, so no corner-click option here
+                    // — see TouchDeviceTriggerKind's doc comment for
+                    // where that lives instead.
+                    mouseButtonField
+                case .keyboard:
+                    LabeledContent("Key combo") {
+                        KeyCaptureField(keyCode: $keyCode, modifiers: $keyModifiers)
+                    }
+                }
+            }
+
+            Section("Action") {
+                actionFields
+            }
+
+            appScopeFields
+
+            if showsGestureFields {
+                Section("Advanced") {
+                    DisclosureGroup("Custom tuning for this rule", isExpanded: $showsAdvanced) {
+                        advancedOverrideFields
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 
-    /// `.trackpad`'s trigger fields: one unified "Gesture" picker mixing
-    /// real multitouch gestures with the 4 corner clicks (see
+    private var mouseButtonField: some View {
+        LabeledContent("Mouse button") {
+            Stepper(value: $mouseButtonNumber, in: 0...31) {
+                Text(RuleSummary.mouseButtonName(mouseButtonNumber))
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    /// `.trackpad`'s trigger fields: one unified picker mixing real
+    /// multitouch gestures with the 4 corner clicks (see
     /// `TrackpadTriggerOption`) — no separate "Trigger" type choice.
     /// `showsGestureFields` (driven by the same `touchDeviceTriggerKind`
     /// the picker below sets) still correctly distinguishes "show repeat/
-    /// sensitivity controls" from "show the corner-click's button number"
+    /// sensitivity controls" from "show the corner-click hint"
     /// regardless of which of the two the unified picker landed on.
     @ViewBuilder private var trackpadTriggerFields: some View {
         Picker("Gesture", selection: trackpadTriggerOption) {
-            Section("Multi-Touch Gesture") {
+            Section("Multi-touch gestures") {
                 ForEach(Trigger.GestureKind.allCases, id: \.self) { kind in
                     Label { Text(kind.displayName) } icon: { GestureGlyphRenderer.image(for: kind) }
                         .tag(TrackpadTriggerOption.gesture(kind))
                 }
             }
-            Section("Corner Click") {
+            Section("Corner clicks") {
                 ForEach(MouseCorner.allCases) { corner in
                     Label { Text(corner.displayName) } icon: { MouseCornerGlyphRenderer.image(for: corner) }
                         .tag(TrackpadTriggerOption.cornerClick(corner))
@@ -376,14 +421,14 @@ struct RuleFormView: View {
         .id(gesture)
 
         if showsGestureFields {
-            gestureRepeatFields
+            gestureRepeatToggles
         } else {
             // No button-number field here on purpose: a corner click is
             // just "touch this corner, then click" — one unambiguous
             // physical action, always the primary click (see `save()`,
             // which hardcodes `number: 0`) — not a configurable button
             // like `.mouse`'s side-buttons or `.magicMouse`'s plain
-            // "Click Anywhere" reasonably still expose.
+            // "Click anywhere" reasonably still expose.
             cornerClickLiveHint
         }
     }
@@ -400,14 +445,16 @@ struct RuleFormView: View {
     @ViewBuilder private var cornerClickLiveHint: some View {
         if case let .cornerClick(selectedCorner) = trackpadTriggerOption.wrappedValue {
             let isNearSelectedCorner = currentCornerHint == selectedCorner
-            HStack(spacing: 6) {
-                Image(systemName: isNearSelectedCorner ? "checkmark.circle.fill" : "hand.point.up.left")
-                    .foregroundStyle(isNearSelectedCorner ? .green : .secondary)
+            Label {
                 Text(isNearSelectedCorner
-                    ? "A finger is resting near \(selectedCorner.displayName.lowercased()) right now — that's where a click needs to land."
-                    : "Rest a finger near \(selectedCorner.displayName.lowercased()) (shown on the right) to confirm it's being detected.")
+                    ? "A finger is resting near \(selectedCorner.displayName.lowercased()) right now — that’s where a click needs to land."
+                    : "Rest a finger near \(selectedCorner.displayName.lowercased()) (shown on the right) to confirm it’s being detected.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: isNearSelectedCorner ? "checkmark.circle" : "hand.point.up.left")
+                    .foregroundStyle(isNearSelectedCorner ? Color.green : Color.secondary)
             }
         }
     }
@@ -435,7 +482,7 @@ struct RuleFormView: View {
     /// gestures, since "click anywhere" doesn't read as a "gesture" the
     /// way a corner click's position-gating at least resembles one.
     @ViewBuilder private var magicMouseTriggerFields: some View {
-        Picker("Trigger", selection: $touchDeviceTriggerKind) {
+        Picker("Type", selection: $touchDeviceTriggerKind) {
             ForEach(availableTriggerKinds) { Text($0.rawValue).tag($0) }
         }
         if showsGestureFields {
@@ -446,75 +493,74 @@ struct RuleFormView: View {
                 }
             }
             .id(gesture)
-            gestureRepeatFields
+            gestureRepeatToggles
         } else {
-            Stepper("Button number: \(mouseButtonNumber)", value: $mouseButtonNumber, in: 0...31)
+            mouseButtonField
         }
     }
 
-    /// Shared by both devices' gesture mode: the per-rule sensitivity
-    /// override plus the repeat-while-held/repeat-by-distance toggles and
-    /// their own overrides. Gated directly on the same properties
+    /// Shared by both devices' gesture mode: the repeat-while-held/
+    /// repeat-by-distance toggles. Gated directly on the same properties
     /// `save()` clamps against (rather than a hand-copied `category ==
     /// .swipe` check) so this can never silently drift out of sync with
     /// what actually gets persisted — an earlier version of this check
     /// only checked `.swipe`, which meant the toggle never appeared for
     /// `.splitSwipe` gestures (e.g. the anchor+swipe Copy/Paste presets)
     /// even though TrackpadManager fully supports repeating them.
-    @ViewBuilder private var gestureRepeatFields: some View {
-        overrideToggleSlider(
-            title: "Custom sensitivity",
-            help: "How easily this specific gesture triggers, instead of the global Gesture Sensitivity slider in Preferences.",
-            enabled: $sensitivityOverrideEnabled,
-            value: $sensitivityOverrideValue
-        )
-
+    @ViewBuilder private var gestureRepeatToggles: some View {
         if Trigger.trackpadGesture(gesture).supportsRepeatWhileHeld {
             Toggle("Repeat while held", isOn: $repeatsWhileHeld)
                 .help("Keep re-running this rule's action for as long as you hold the swipe, instead of firing once.")
-            if repeatsWhileHeld {
+            if repeatsWhileHeld && Trigger.trackpadGesture(gesture).supportsRepeatByDistance {
+                Toggle("Repeat by distance instead of time", isOn: $repeatsByDistance)
+                    .help("Re-run the action every time you slide the fingers a bit further, like a scroll wheel, instead of on a fixed timer.")
+            }
+        }
+    }
+
+    /// Per-rule overrides of the global Gesture Tuning sliders, tucked
+    /// behind a disclosure since most rules never need them. Only the
+    /// overrides that `save()` will actually persist for the current
+    /// repeat settings are shown.
+    @ViewBuilder private var advancedOverrideFields: some View {
+        overrideToggleSlider(
+            title: "Custom sensitivity",
+            help: "How easily this specific gesture triggers, instead of the global sensitivity in Gesture Tuning.",
+            enabled: $sensitivityOverrideEnabled,
+            value: $sensitivityOverrideValue
+        )
+        if Trigger.trackpadGesture(gesture).supportsRepeatWhileHeld && repeatsWhileHeld {
+            overrideToggleSlider(
+                title: "Custom repeat speed",
+                help: "How fast this rule re-fires while held, instead of the global repeat speed in Gesture Tuning.",
+                enabled: $repeatIntervalOverrideEnabled,
+                value: $repeatIntervalOverrideValue,
+                range: 0.15...0.75,
+                invertedDisplay: true
+            )
+            overrideToggleSlider(
+                title: "Custom repeat delay",
+                help: "How long to wait after this rule first fires before it starts repeating, instead of the global repeat delay in Gesture Tuning.",
+                enabled: $repeatDelayOverrideEnabled,
+                value: $repeatDelayOverrideValue,
+                range: 0...1.0
+            )
+            if Trigger.trackpadGesture(gesture).supportsRepeatByDistance && repeatsByDistance {
                 overrideToggleSlider(
-                    title: "Custom repeat speed",
-                    help: "How fast this rule re-fires while held, instead of the global Repeat While Held Speed slider.",
-                    enabled: $repeatIntervalOverrideEnabled,
-                    value: $repeatIntervalOverrideValue,
-                    range: 0.15...0.75,
-                    invertedDisplay: true
+                    title: "Custom distance sensitivity",
+                    help: "How much travel counts as \"one more repeat\", instead of the global distance sensitivity in Gesture Tuning.",
+                    enabled: $repeatByDistanceSensitivityOverrideEnabled,
+                    value: $repeatByDistanceSensitivityOverrideValue
                 )
-                .padding(.leading, 16)
-                overrideToggleSlider(
-                    title: "Custom repeat delay",
-                    help: "How long to wait after this rule first fires before it starts repeating, instead of the global Repeat Delay slider.",
-                    enabled: $repeatDelayOverrideEnabled,
-                    value: $repeatDelayOverrideValue,
-                    range: 0...1.0
-                )
-                .padding(.leading, 16)
-                if Trigger.trackpadGesture(gesture).supportsRepeatByDistance {
-                    Toggle("Repeat by distance instead of time", isOn: $repeatsByDistance)
-                        .help("Re-run the action every time you slide the fingers a bit further, like a scroll wheel, instead of on a fixed timer.")
-                        .padding(.leading, 16)
-                    if repeatsByDistance {
-                        overrideToggleSlider(
-                            title: "Custom distance sensitivity",
-                            help: "How much travel counts as \"one more repeat\", instead of the global Repeat by Distance Sensitivity slider.",
-                            enabled: $repeatByDistanceSensitivityOverrideEnabled,
-                            value: $repeatByDistanceSensitivityOverrideValue
-                        )
-                        .padding(.leading, 32)
-                    }
-                }
             }
         }
     }
 
     /// A toggle that reveals a slider when on, for one of the four
-    /// per-rule overrides of a global Preferences slider (see
+    /// per-rule overrides of a global Gesture Tuning slider (see
     /// `CustomizationRule`'s doc comment on `sensitivityOverride`).
     /// `enabled == false` is what makes `save()` persist `nil` (use the
-    /// global default) regardless of whatever `value` last held — the
-    /// slider stays interactive-looking but simply isn't consulted while
-    /// off.
+    /// global default) regardless of whatever `value` last held.
     @ViewBuilder
     private func overrideToggleSlider(
         title: String,
@@ -524,45 +570,55 @@ struct RuleFormView: View {
         range: ClosedRange<Double> = 0...1,
         invertedDisplay: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Toggle(title, isOn: enabled).help(help)
-            if enabled.wrappedValue {
-                HStack {
-                    Text(invertedDisplay ? "Slower" : "Less").font(.caption2).foregroundStyle(.secondary)
-                    // Inverted: for "repeat speed", left-to-right reading
-                    // as "slower to faster" is natural, but a *smaller*
-                    // interval is what's actually faster — same trick
-                    // SettingsView's global slider uses.
-                    Slider(
-                        value: invertedDisplay
-                            ? Binding(
-                                get: { range.upperBound + range.lowerBound - value.wrappedValue },
-                                set: { value.wrappedValue = range.upperBound + range.lowerBound - $0 }
-                              )
-                            : value,
-                        in: range
-                    )
-                    Text(invertedDisplay ? "Faster" : "More").font(.caption2).foregroundStyle(.secondary)
-                }
-            }
+        Toggle(title, isOn: enabled).help(help)
+        if enabled.wrappedValue {
+            LabeledSlider(
+                title: title.replacingOccurrences(of: "Custom ", with: "").capitalizedFirstLetter,
+                value: invertedDisplay ? SliderBinding.inverted(value, in: range) : value,
+                range: range,
+                minimumLabel: invertedDisplay ? "Slower" : "Less",
+                maximumLabel: invertedDisplay ? "Faster" : "More"
+            )
         }
     }
 
     @ViewBuilder private var actionFields: some View {
         Picker("Action", selection: $actionKind) {
-            ForEach(ActionKind.allCases) { Text($0.rawValue).tag($0) }
+            ForEach(ActionKind.allCases) { kind in
+                Label(kind.rawValue, systemImage: kind.systemImage).tag(kind)
+            }
         }
         switch actionKind {
         case .shellCommand:
-            TextField("Command", text: $shellCommand)
+            LabeledContent("Command") {
+                TextField("Command", text: $shellCommand, prompt: Text("open -a Calculator"))
+                    .labelsHidden()
+                    .font(.body.monospaced())
+            }
+            Label("Runs with your full user permissions. Only use commands you understand and trust.", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
         case .launchApp:
-            TextField("Bundle identifier (e.g. com.apple.Safari)", text: $bundleIdentifier)
+            LabeledContent("App") {
+                HStack(spacing: 8) {
+                    if bundleIdentifier.isEmpty {
+                        Text("None").foregroundStyle(.secondary)
+                    } else {
+                        AppIconView(bundleIdentifier: bundleIdentifier, size: 20)
+                        Text(InstalledApp.displayName(for: bundleIdentifier))
+                            .help(bundleIdentifier)
+                    }
+                    Button(bundleIdentifier.isEmpty ? "Choose…" : "Change…") {
+                        if let app = InstalledApp.choose() { bundleIdentifier = app.bundleIdentifier }
+                    }
+                }
+            }
         case .mediaKey:
             Picker("Key", selection: $mediaKey) {
-                ForEach(Action.MediaKey.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(Action.MediaKey.allCases, id: \.self) { Text($0.displayName).tag($0) }
             }
         case .remapToKey:
-            LabeledContent("New key") {
+            LabeledContent(device == .keyboard ? "New key" : "Shortcut") {
                 KeyCaptureField(keyCode: $remapKeyCode, modifiers: $remapModifiers)
             }
         case .missionControl:
@@ -585,11 +641,11 @@ struct RuleFormView: View {
                 onRemove: { app in restrictedToApps.removeAll { $0.id == app.id } }
             )
         } header: {
-            Text("Only in these apps")
+            Text("Apps")
         } footer: {
             Text(restrictedToApps.isEmpty
-                ? "Applies everywhere."
-                : "Only fires while one of these apps is frontmost. For a whole different set of gestures per app, use Profiles instead (Preferences → profile switcher → Manage Profiles…).")
+                ? "Works in every app. Add apps to limit this rule to them."
+                : "Only works while one of these apps is in front. For a whole different set of rules per app, use a profile instead (profile menu → Manage Profiles…).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -621,7 +677,8 @@ struct RuleFormView: View {
         case .remapToKey: action = .remapToKey(keyCode: remapKeyCode, modifiers: remapModifiers)
         }
 
-        let ruleName = name.isEmpty ? "Untitled rule" : name
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        let ruleName = trimmedName.isEmpty ? RuleSummary.suggestedName(for: action) : trimmedName
         // Compose off the already-clamped sibling value so the two can't
         // drift apart if supportsRepeatWhileHeld's definition ever changes
         // without someone remembering to mirror it here.
@@ -682,12 +739,33 @@ struct KeyCaptureField: View {
     var body: some View {
         HStack {
             Text(isRecording ? "Press a key…" : KeyCodeMap.describe(keyCode: keyCode, modifiers: modifiers))
-                .frame(minWidth: 120, alignment: .leading)
+                .foregroundStyle(isRecording ? Color.accentColor : Color.primary)
+                .frame(minWidth: 110, alignment: .leading)
                 .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.15)))
+                .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(isRecording ? Color.accentColor : Color.clear))
             Button(isRecording ? "Cancel" : "Record") {
                 isRecording ? stopRecording() : startRecording()
             }
+            // Some shortcuts (Mission Control, Spaces, Spotlight, the app
+            // switcher, screenshots…) are consumed by macOS itself before
+            // a local key monitor ever sees the press, so "Record" can
+            // never capture them — this sets them directly instead.
+            Menu {
+                ForEach(KeyCodeMap.presetShortcuts) { preset in
+                    Button(preset.name) {
+                        stopRecording()
+                        keyCode = preset.keyCode
+                        modifiers = preset.modifiers
+                    }
+                }
+            } label: {
+                Image(systemName: "list.bullet")
+            }
+            .accessibilityLabel("Common system shortcuts")
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Pick a shortcut that macOS intercepts before it can be recorded")
         }
         .onDisappear { stopRecording() }
     }
@@ -707,4 +785,8 @@ struct KeyCaptureField: View {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
     }
+}
+
+private extension String {
+    var capitalizedFirstLetter: String { prefix(1).uppercased() + dropFirst() }
 }

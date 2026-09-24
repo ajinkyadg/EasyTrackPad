@@ -26,23 +26,39 @@ struct ManageProfilesView: View {
         let appLaunchCount: Int
     }
 
+    /// Set when reading/writing a profile file fails, so the failure is
+    /// shown instead of silently doing nothing.
+    @State private var fileError: FileError?
+
+    private struct FileError: Identifiable {
+        let id = UUID()
+        let title: String
+        let message: String
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Manage Profiles").font(.headline)
-                Spacer()
-                Button {
-                    settingsStore.addProfile(name: "New Profile")
-                } label: {
-                    Label("New Profile", systemImage: "plus")
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Profiles").font(.title3.weight(.semibold))
+                    Text("Each profile is its own set of rules. Switch between them from the toolbar or menu bar.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
+                Spacer()
                 Button {
                     importProfile()
                 } label: {
                     Label("Import…", systemImage: "square.and.arrow.down")
                 }
+                Button {
+                    settingsStore.addProfile(name: "New Profile")
+                } label: {
+                    Label("New Profile", systemImage: "plus")
+                }
             }
-            .padding()
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
 
             Divider()
 
@@ -52,17 +68,14 @@ struct ManageProfilesView: View {
                 }
             }
             .formStyle(.grouped)
-
-            Divider()
-
-            HStack {
-                Spacer()
+        }
+        .frame(width: 580, height: 580)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding()
         }
-        .frame(width: 540, height: 560)
         .alert(item: $pendingImport) { pending in
             Alert(
                 title: Text("This profile can run commands on your Mac"),
@@ -71,6 +84,13 @@ struct ManageProfilesView: View {
                 secondaryButton: .cancel()
             )
         }
+        .background(
+            // A second `.alert(item:)` on the same view would override
+            // the first, so this one hangs off a separate background view.
+            Color.clear.alert(item: $fileError) { error in
+                Alert(title: Text(error.title), message: Text(error.message), dismissButton: .default(Text("OK")))
+            }
+        )
     }
 
     private func riskDescription(for pending: PendingImport) -> String {
@@ -87,14 +107,33 @@ struct ManageProfilesView: View {
     @ViewBuilder
     private func profileSection(_ profile: Profile) -> some View {
         Section {
-            HStack {
+            LabeledContent("Name") {
                 TextField("Name", text: nameBinding(for: profile))
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .semibold))
+                    .labelsHidden()
+                    .multilineTextAlignment(.trailing)
+            }
+            LabeledContent("Rules", value: "\(profile.rules.count)")
+
+            Text("Switch to this profile automatically when one of these apps is in front:")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            AppReferenceListEditor(
+                apps: profile.autoActivateApps,
+                onAdd: { settingsStore.assignAutoActivateApp($0, toProfile: profile.id) },
+                onRemove: { settingsStore.removeAutoActivateApp($0, fromProfile: profile.id) }
+            )
+        } header: {
+            HStack(spacing: 8) {
+                Text(profile.name).font(.headline)
+                if profile.id == settingsStore.activeProfileID {
+                    Text("Active")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                }
                 Spacer()
-                Text("\(profile.rules.count) rule\(profile.rules.count == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Menu {
                     Button("Duplicate") { settingsStore.duplicateProfile(id: profile.id) }
                     Button("Export…") { exportProfile(profile) }
@@ -105,20 +144,15 @@ struct ManageProfilesView: View {
                     Image(systemName: "ellipsis.circle")
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .fixedSize()
+                .help("More actions")
+                .accessibilityLabel("More actions for \(profile.name)")
             }
-
-            AppReferenceListEditor(
-                apps: profile.autoActivateApps,
-                onAdd: { settingsStore.assignAutoActivateApp($0, toProfile: profile.id) },
-                onRemove: { settingsStore.removeAutoActivateApp($0, fromProfile: profile.id) }
-            )
-        } header: {
-            Text("Auto-Activate For")
         } footer: {
             Text(profile.autoActivateApps.isEmpty
-                ? "Manual only — this profile becomes active only when you select it from the profile switcher."
-                : "Automatically becomes active while one of these apps is frontmost, then reverts to your manually selected profile when you switch away.")
+                ? "Manual only — this profile becomes active only when you select it."
+                : "Becomes active automatically while one of these apps is in front, then switches back to your selected profile when you leave it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -136,9 +170,12 @@ struct ManageProfilesView: View {
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "\(profile.name).json"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let export = ProfileExportFile(profile: profile)
-        guard let data = try? JSONEncoder().encode(export) else { return }
-        try? data.write(to: url)
+        do {
+            let data = try JSONEncoder().encode(ProfileExportFile(profile: profile))
+            try data.write(to: url)
+        } catch {
+            fileError = FileError(title: "Couldn’t export “\(profile.name)”", message: error.localizedDescription)
+        }
     }
 
     /// A profile is just JSON — one anyone could share, and a shell-command
@@ -155,8 +192,17 @@ struct ManageProfilesView: View {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard let data = try? Data(contentsOf: url),
-              let export = try? JSONDecoder().decode(ProfileExportFile.self, from: data) else { return }
+        let export: ProfileExportFile
+        do {
+            let data = try Data(contentsOf: url)
+            export = try JSONDecoder().decode(ProfileExportFile.self, from: data)
+        } catch is DecodingError {
+            fileError = FileError(title: "Couldn’t import “\(url.lastPathComponent)”", message: "This file isn’t an InputCustomizer profile, or it was made by an incompatible version.")
+            return
+        } catch {
+            fileError = FileError(title: "Couldn’t import “\(url.lastPathComponent)”", message: error.localizedDescription)
+            return
+        }
 
         var profile = export.profile
         var shellCommandCount = 0

@@ -19,31 +19,32 @@ struct AppReferenceListEditor: View {
 
     var body: some View {
         ForEach(apps) { app in
-            HStack {
+            HStack(spacing: 8) {
+                AppIconView(bundleIdentifier: app.bundleIdentifier)
                 Text(app.displayName)
                 Spacer()
                 Button(role: .destructive) {
                     onRemove(app)
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(systemName: "minus.circle")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Remove \(app.displayName)")
+                .accessibilityLabel("Remove \(app.displayName)")
             }
         }
-        Button("Add App…") { addApp() }
+        Button {
+            addApp()
+        } label: {
+            Label("Add App…", systemImage: "plus")
+        }
+        .buttonStyle(.borderless)
     }
 
     private func addApp() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.application]
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let bundleIdentifier = Bundle(url: url)?.bundleIdentifier ?? url.deletingPathExtension().lastPathComponent
-        guard !apps.contains(where: { $0.bundleIdentifier == bundleIdentifier }) else { return }
-        let displayName = FileManager.default.displayName(atPath: url.path)
-        onAdd(AppReference(bundleIdentifier: bundleIdentifier, displayName: displayName))
+        guard let app = InstalledApp.choose(),
+              !apps.contains(where: { $0.bundleIdentifier == app.bundleIdentifier }) else { return }
+        onAdd(app)
     }
 }

@@ -47,7 +47,11 @@ struct TouchVisualizerView: View {
             touchSurface
                 .frame(width: Self.surfaceWidth, height: Self.cardHeight)
 
+            // Pinned to the card height: a bare vertical Divider grows to
+            // whatever height it's offered, which stretched the whole card
+            // to the full form column.
             Divider()
+                .frame(height: Self.cardHeight)
 
             infoPanel
                 .frame(width: Self.infoWidth, height: Self.cardHeight)
@@ -95,7 +99,7 @@ struct TouchVisualizerView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
             .background(
                 RadialGradient(
-                    colors: [TouchDotView.neonGreen.opacity(0.07), .clear],
+                    colors: [TouchDotView.dotColor.opacity(0.07), .clear],
                     center: .center, startRadius: 0, endRadius: geometry.size.width * 0.75
                 )
             )
@@ -115,8 +119,9 @@ struct TouchVisualizerView: View {
     private var unavailableDeviceOverlay: some View {
         VStack(spacing: 8) {
             Image(systemName: "cursorarrow.slash")
-                .font(.system(size: 22))
+                .font(.title2)
                 .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
             Text("No \(device.displayName.lowercased()) detected")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
@@ -128,8 +133,8 @@ struct TouchVisualizerView: View {
     private var infoPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("DETECTED")
-                    .font(.caption2.weight(.semibold))
+                Text("Detected")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 // Always present (not conditionally inserted) so this row
@@ -147,6 +152,7 @@ struct TouchVisualizerView: View {
                 .opacity(visualizerModel.lastGesture == nil ? 0 : 1)
                 .disabled(visualizerModel.lastGesture == nil)
                 .help("Clear and try a new gesture")
+                .accessibilityLabel("Clear detected gesture")
             }
             .padding(.bottom, 4)
 
@@ -162,6 +168,7 @@ struct TouchVisualizerView: View {
                 } else {
                     Image(systemName: "hand.point.up.left")
                         .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
                     Text("None yet")
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
@@ -198,38 +205,43 @@ struct TouchVisualizerView: View {
         visualizerModel.touches.filter { Self.touchingStates.contains($0.state) }
     }
 
+    /// "trackpad" reads naturally mid-sentence; "Magic Mouse" is a product
+    /// name and keeps its capitals.
+    private var deviceNameInSentence: String {
+        device == .magicMouse ? device.displayName : device.displayName.lowercased()
+    }
+
     private var statusText: String {
-        guard isDeviceAvailable else { return "No \(device.displayName.lowercased()) detected." }
+        guard isDeviceAvailable else { return "No \(deviceNameInSentence) detected." }
         let count = touchingTouches.count
-        guard count > 0 else { return "Touch the \(device.displayName.lowercased()) to try a gesture." }
+        guard count > 0 else { return "Touch the \(deviceNameInSentence) to try a gesture." }
         return "\(count) finger\(count == 1 ? "" : "s") down — perform a gesture."
     }
 }
 
-/// A live finger-touch dot — neon-green halo (blurred fill + layered
-/// glow shadows) and a faint ring around a solid core, rather than a
-/// single flat circle. The two stacked `.shadow()` calls at different
-/// radii/opacities (on top of the blurred halo circle) is what actually
-/// sells the "neon glow" look — a single shadow reads as a flat drop
-/// shadow, not a glow.
+/// A live finger-touch dot — a soft accent-colored halo (blurred fill +
+/// glow shadow) and a faint ring around a solid core, rather than a
+/// single flat circle. Uses the same system accent as `GestureIconView`
+/// so the live preview and the static glyph it replaces read as one
+/// visual system.
 struct TouchDotView: View {
-    static let neonGreen = Color(red: 57.0 / 255, green: 1.0, blue: 20.0 / 255)
+    static let dotColor = Color.accentColor
 
     var body: some View {
         ZStack {
             Circle()
-                .fill(Self.neonGreen.opacity(0.35))
-                .frame(width: 50, height: 50)
-                .blur(radius: 9)
+                .fill(Self.dotColor.opacity(0.25))
+                .frame(width: 46, height: 46)
+                .blur(radius: 8)
             Circle()
-                .strokeBorder(Self.neonGreen.opacity(0.55), lineWidth: 2)
+                .strokeBorder(Self.dotColor.opacity(0.45), lineWidth: 2)
                 .frame(width: 34, height: 34)
             Circle()
-                .fill(Self.neonGreen)
+                .fill(Self.dotColor)
                 .frame(width: 22, height: 22)
-                .shadow(color: Self.neonGreen.opacity(0.85), radius: 8)
-                .shadow(color: Self.neonGreen.opacity(0.5), radius: 16)
+                .shadow(color: Self.dotColor.opacity(0.6), radius: 8)
         }
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

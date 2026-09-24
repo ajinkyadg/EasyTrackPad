@@ -2,7 +2,7 @@ import SwiftUI
 import GestureEngine
 import InputModels
 
-/// Small blue-tinted "trackpad" glyph — a rounded rectangle frame holding
+/// Small accent-tinted "trackpad" glyph — a rounded rectangle frame holding
 /// a staggered row of dots (one per finger, alternating slightly up/down
 /// rather than a flat line, closer to a relaxed hand than a ruler), where
 /// a finger that's deliberately anchored (see `.splitSwipe`) is hollow
@@ -24,11 +24,10 @@ struct GestureIconView: View {
 
     static let size = CGSize(width: 34 * aspectRatio, height: 34)
 
-    /// A single accent for the whole glyph — vibrant enough to read at
-    /// small sizes in both light and dark appearances, rather than
-    /// deriving from `.primary`/`.accentColor` which would tie this to
-    /// whatever the system/app accent happens to be.
-    static let iconColor = Color(red: 0.2, green: 0.5, blue: 1.0)
+    /// The system accent color, shared with the live touch dots and every
+    /// other tinted glyph in the app so the whole UI reads as one palette
+    /// (and follows the user's System Settings accent choice).
+    static let iconColor = Color.accentColor
 
     private enum Slot {
         case dot(filled: Bool, tracing: Bool)
@@ -52,6 +51,9 @@ struct GestureIconView: View {
             }
         }
         .frame(width: width, height: height)
+        .accessibilityElement()
+        .accessibilityLabel(kind.displayName)
+        .accessibilityAddTraits(.isImage)
     }
 
     // MARK: - Dot layout
@@ -84,8 +86,10 @@ struct GestureIconView: View {
     static func drawFrame(_ context: inout GraphicsContext, size: CGSize) {
         let rect = CGRect(origin: .zero, size: size).insetBy(dx: size.width * 0.07, dy: size.height * 0.07)
         let path = Path(roundedRect: rect, cornerRadius: size.width * 0.2)
-        context.fill(path, with: .color(iconColor.opacity(0.05)))
-        context.stroke(path, with: .color(iconColor.opacity(0.45)), style: StrokeStyle(lineWidth: size.width * 0.05))
+        // Stronger than a hairline tint so the tile still reads against the
+        // dark list background.
+        context.fill(path, with: .color(iconColor.opacity(0.10)))
+        context.stroke(path, with: .color(iconColor.opacity(0.55)), style: StrokeStyle(lineWidth: size.width * 0.05))
     }
 
     static func safeRect(for size: CGSize) -> CGRect {
@@ -201,7 +205,7 @@ struct GestureIconView: View {
         path.closeSubpath()
         let tailRadius = arrowWidth / 2
         path.addEllipse(in: CGRect(x: tailCenter.x - tailRadius, y: tailCenter.y - tailRadius, width: tailRadius * 2, height: tailRadius * 2))
-        context.fill(path, with: .color(iconColor.opacity(0.85)))
+        context.fill(path, with: .color(iconColor))
     }
 
     private static func drawDoubleMark(_ context: inout GraphicsContext, size: CGSize) {
@@ -210,7 +214,7 @@ struct GestureIconView: View {
         let badgeRadius = max(textSize.width, textSize.height) / 2 + 1.5
         let point = CGPoint(x: size.width - badgeRadius - 1, y: size.height - badgeRadius - 1)
         let badgeRect = CGRect(x: point.x - badgeRadius, y: point.y - badgeRadius, width: badgeRadius * 2, height: badgeRadius * 2)
-        context.fill(Path(ellipseIn: badgeRect), with: .color(.orange))
+        context.fill(Path(ellipseIn: badgeRect), with: .color(iconColor))
         context.draw(text, at: point)
     }
 
@@ -307,6 +311,9 @@ struct MouseCornerIconView: View {
             GestureIconView.drawEdgeArrow(&context, degrees: angleDegrees, size: canvasSize)
         }
         .frame(width: width, height: height)
+        .accessibilityElement()
+        .accessibilityLabel("Click, \(corner.displayName.lowercased())")
+        .accessibilityAddTraits(.isImage)
     }
 }
 

@@ -148,12 +148,12 @@ public enum GestureKind: String, Codable, CaseIterable {
         case .pinchOut: return "Pinch Out"
         case .rotateClockwise: return "Rotate Clockwise"
         case .rotateCounterClockwise: return "Rotate Counter-Clockwise"
-        case .twoFingerLeftSwipeUp: return "2-Finger, Left Swipes Up"
-        case .twoFingerLeftSwipeDown: return "2-Finger, Left Swipes Down"
-        case .twoFingerRightSwipeUp: return "2-Finger, Right Swipes Up"
-        case .twoFingerRightSwipeDown: return "2-Finger, Right Swipes Down"
-        case .twoFingerLeftTap: return "2-Finger, Left Taps"
-        case .twoFingerRightTap: return "2-Finger, Right Taps"
+        case .twoFingerLeftSwipeUp: return "Split Swipe: Left Finger Up"
+        case .twoFingerLeftSwipeDown: return "Split Swipe: Left Finger Down"
+        case .twoFingerRightSwipeUp: return "Split Swipe: Right Finger Up"
+        case .twoFingerRightSwipeDown: return "Split Swipe: Right Finger Down"
+        case .twoFingerLeftTap: return "Split Tap: Left Finger"
+        case .twoFingerRightTap: return "Split Tap: Right Finger"
         case .twoFingerFastScrollToBottomEdge: return "Fast Scroll to Bottom Edge"
         default: break
         }

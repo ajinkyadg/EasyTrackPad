@@ -22,6 +22,23 @@ public struct RulePreset: Identifiable {
         self.repeatsWhileHeld = repeatsWhileHeld
         self.repeatsByDistance = repeatsByDistance
     }
+
+    /// The name a rule created from this preset gets. Preset names carry a
+    /// gesture note — "Close Tab (4-Finger Double Tap)" — so the preset
+    /// *menu* can tell look-alikes apart; on a saved rule that note just
+    /// repeats the trigger line shown under the name, so it's dropped.
+    public var ruleName: String { Self.strippingGestureNote(from: name) }
+
+    /// Removes a trailing "(…)" that describes a gesture, click, or device
+    /// — not an arbitrary user parenthetical like "(work)".
+    public static func strippingGestureNote(from name: String) -> String {
+        guard name.hasSuffix(")"), let open = name.lastIndex(of: "(") else { return name }
+        let note = name[name.index(after: open)..<name.index(before: name.endIndex)]
+        let gestureWords = ["Finger", "Click", "Pinch", "Rotate", "Scroll", "Trackpad", "Magic Mouse"]
+        guard gestureWords.contains(where: { note.localizedCaseInsensitiveContains($0) }) else { return name }
+        let stripped = name[..<open].trimmingCharacters(in: .whitespaces)
+        return stripped.isEmpty ? name : stripped
+    }
 }
 
 public enum GesturePresets {
