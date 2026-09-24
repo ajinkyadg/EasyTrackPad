@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+  <!-- Paused: same outline, fingers kept solid (hollow rings mush at 1x), plus the standard SF-style slash (with a knock-out gap). -->
+  <defs><mask id="m"><rect width="18" height="18" fill="#fff"/><path d="M2.2 1.2 L16.8 16.8" stroke="#000" stroke-width="3.2" stroke-linecap="round"/></mask></defs>
+  <g mask="url(#m)">
+    <rect x="1.75" y="3.25" width="14.5" height="11.5" rx="2.75" fill="none" stroke="#000" stroke-width="1.5"/>
+    <circle cx="5.6" cy="10.2" r="1.6" fill="#000"/>
+    <circle cx="9" cy="7.8" r="1.6" fill="#000"/>
+    <circle cx="12.4" cy="10.2" r="1.6" fill="#000"/>
+  </g>
+  <path d="M2.2 1.2 L16.8 16.8" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

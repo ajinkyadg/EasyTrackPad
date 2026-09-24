@@ -21,6 +21,9 @@ rm -rf "$APP_PATH"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/$APP_NAME"
 cp "$INFO_PLIST_PATH" "$CONTENTS_DIR/Info.plist"
+# Prebuilt from Assets/AppIcon*.svg by Scripts/make-icon.sh; referenced by
+# CFBundleIconFile in Info.plist. Copied before signing so it's sealed.
+cp "$PROJECT_DIR/Assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 chmod 755 "$MACOS_DIR/$APP_NAME"
 
 LOCAL_IDENTITY_NAME="InputCustomizer Local Dev"

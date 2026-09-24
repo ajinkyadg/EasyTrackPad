@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Concept A "Glide": a glass trackpad with three fingers mid-swipe.
+       Same visual grammar as the in-app GestureIconView (staggered dots + fading trails). -->
+  <defs>
+    <path id="sq" d="M284,100 H740 C860,100 924,164 924,284 V740 C924,860 860,924 740,924 H284 C164,924 100,860 100,740 V284 C100,164 164,100 284,100 Z"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7280FF"/>
+      <stop offset="1" stop-color="#3B30CF"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.5" cy="0.02" r="0.8">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E2E5F7"/>
+    </linearGradient>
+    <linearGradient id="trail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4A3FE0" stop-opacity="0"/>
+      <stop offset="1" stop-color="#4A3FE0" stop-opacity="0.30"/>
+    </linearGradient>
+    <linearGradient id="dot" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6470FF"/>
+      <stop offset="1" stop-color="#2E24BF"/>
+    </linearGradient>
+    <filter id="icoShadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity="0.30"/>
+    </filter>
+    <filter id="padShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#150E6A" flood-opacity="0.45"/>
+    </filter>
+    <filter id="dotShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#1B1390" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#icoShadow)"><use href="#sq" fill="url(#bg)"/></g>
+  <use href="#sq" fill="url(#sheen)"/>
+  <!-- trackpad slab -->
+  <g filter="url(#padShadow)">
+    <rect x="212" y="292" width="600" height="440" rx="72" fill="url(#pad)"/>
+  </g>
+  <rect x="213.5" y="293.5" width="597" height="437" rx="70.5" fill="none" stroke="#FFFFFF" stroke-width="3"/>
+  <!-- trails -->
+  <rect x="226" y="496" width="194" height="88" rx="44" fill="url(#trail)"/>
+  <rect x="346" y="436" width="194" height="88" rx="44" fill="url(#trail)"/>
+  <rect x="466" y="496" width="194" height="88" rx="44" fill="url(#trail)"/>
+  <!-- fingers -->
+  <g filter="url(#dotShadow)">
+    <circle cx="376" cy="540" r="48" fill="url(#dot)"/>
+    <circle cx="496" cy="480" r="48" fill="url(#dot)"/>
+    <circle cx="616" cy="540" r="48" fill="url(#dot)"/>
+  </g>
+  <!-- leading chevron -->
+  <path d="M704 468 L748 512 L704 556" fill="none" stroke="#3B30CF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>
+</svg>
