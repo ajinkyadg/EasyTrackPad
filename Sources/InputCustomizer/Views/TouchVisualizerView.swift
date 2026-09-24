@@ -72,14 +72,14 @@ struct TouchVisualizerView: View {
                 if !isDeviceAvailable {
                     unavailableDeviceOverlay
                 } else if touchingTouches.isEmpty {
-                    // Static preview of whatever the picker is currently
-                    // set to, filling the box while nothing is actually
-                    // touching — replaced by real touch dots the instant
-                    // a finger lands. Same glyph language as the small
+                    // Animated preview of whatever the picker is currently
+                    // set to — the gesture being performed, on a loop —
+                    // filling the box while nothing is actually touching,
+                    // replaced by real touch dots the instant a finger lands. Same glyph language as the small
                     // icons elsewhere in the app (just scaled up), rather
                     // than a separate illustration style, so this box and
                     // the rule list read as the same visual system.
-                    GestureIconView(kind: selectedGesture, height: min(geometry.size.width, geometry.size.height) * 0.7)
+                    GestureIconView(kind: selectedGesture, height: min(geometry.size.width, geometry.size.height) * 0.7, surface: GlyphSurface(device: device), animated: true)
                 }
 
                 if isDeviceAvailable {
@@ -161,7 +161,7 @@ struct TouchVisualizerView: View {
             // anything below it.
             HStack(spacing: 6) {
                 if let gesture = visualizerModel.lastGesture {
-                    GestureIconView(kind: gesture, height: 22)
+                    GestureIconView(kind: gesture, height: 22, surface: GlyphSurface(device: device))
                     Text(gesture.displayName)
                         .font(.subheadline.weight(.medium))
                         .lineLimit(2)

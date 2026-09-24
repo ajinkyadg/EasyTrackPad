@@ -482,11 +482,14 @@ private struct RuleRow: View {
     let onEdit: () -> Void
 
     private var displayName: String { RuleSummary.displayName(for: rule) }
+    /// The row's glyph plays its gesture while hovered — a quick "what
+    /// does this look like" without opening the rule.
+    @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
-                RuleGlyph(trigger: rule.trigger, device: rule.device)
+                RuleGlyph(trigger: rule.trigger, device: rule.device, animated: isHovering)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(displayName)
                         .font(.body.weight(.medium))
@@ -523,6 +526,8 @@ private struct RuleRow: View {
                 .accessibilityLabel("\(displayName) enabled")
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
     }
 }
@@ -534,14 +539,15 @@ struct RuleGlyph: View {
     let trigger: Trigger
     let device: InputDevice
     var height: CGFloat = 28
+    var animated = false
 
     var body: some View {
         Group {
             switch trigger {
             case let .trackpadGesture(kind):
-                GestureIconView(kind: kind, height: height)
+                GestureIconView(kind: kind, height: height, surface: GlyphSurface(device: device), animated: animated)
             case let .mouseCornerClick(corner, _, _):
-                MouseCornerIconView(corner: corner, height: height)
+                MouseCornerIconView(corner: corner, height: height, animated: animated)
             case .keyCombo:
                 symbol("keyboard")
             case .mouseButton:
@@ -551,17 +557,18 @@ struct RuleGlyph: View {
         .frame(width: height * 1.3, height: height)
     }
 
-    /// Same rounded tile as `GestureIconView`'s, so mouse and keyboard
-    /// rows line up visually with gesture rows.
+    /// Drawn with `GestureIconView.drawFrame` itself, so mouse and
+    /// keyboard rows get exactly the gesture rows' tile — same inset,
+    /// corner radius and stroke — rather than a look-alike.
     private func symbol(_ name: String) -> some View {
-        let tile = RoundedRectangle(cornerRadius: height * 0.26, style: .continuous)
-        return Image(systemName: name)
-            .font(.system(size: height * 0.55))
-            .foregroundStyle(Color.accentColor)
-            .frame(width: height * 1.3, height: height)
-            .background(tile.fill(Color.accentColor.opacity(0.10)))
-            .overlay(tile.strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1.5))
-            .accessibilityHidden(true)
+        ZStack {
+            Canvas { context, size in GestureIconView.drawFrame(&context, size: size) }
+            Image(systemName: name)
+                .font(.system(size: height * 0.5))
+                .foregroundStyle(Color.accentColor)
+        }
+        .frame(width: height * 1.3, height: height)
+        .accessibilityHidden(true)
     }
 }
 
@@ -640,7 +647,7 @@ private struct RuleEmptyState: View {
     private var featuredCard: some View {
         HStack(spacing: 14) {
             if case let .trackpadGesture(kind) = featuredPresets[0].trigger {
-                GestureIconView(kind: kind, height: 40)
+                GestureIconView(kind: kind, height: 40, surface: GlyphSurface(device: device), animated: true)
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text("Try Smoogler").font(.headline)
