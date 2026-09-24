@@ -187,6 +187,114 @@ final class GestureRecognizerTests: XCTestCase {
         XCTAssertEqual(ticks, [.threeFingerSwipeLeft])
     }
 
+    // MARK: - Finger set changing mid-hold (stray corner fingers)
+
+    func testStrayCornerFingerLandingAfterATwoFingerSwipeDoesNotFireAThreeFingerSwipe() {
+        let recognizer = GestureRecognizer()
+        var fired: [Trigger.GestureKind] = []
+        var ticks: [Trigger.GestureKind] = []
+        var cancelled = 0
+        recognizer.onGesture = { fired.append($0) }
+        recognizer.onSwipeTick = { ticks.append($0) }
+        recognizer.onRepeatCancelled = { cancelled += 1 }
+
+        // Two fingers at opposite corners drift right together — an
+        // ordinary 2-finger swipe fires (even with no rule bound to it).
+        recognizer.process(.init(touches: [touch(1, 0.1, 0.9), touch(2, 0.6, 0.1)], timestamp: 0))
+        recognizer.process(.init(touches: [touch(1, 0.25, 0.9), touch(2, 0.75, 0.1)], timestamp: 0.05))
+        XCTAssertEqual(fired, [.twoFingerSwipeRight])
+
+        // A third finger lands in another corner and stays, then all three
+        // keep moving — this used to re-fire as .threeFingerSwipeRight
+        // through the direction-change path and start a Smoogler run.
+        let three: (Double) -> [MultitouchGestureEngine.Touch] = { dx in
+            [self.touch(1, 0.25 + dx, 0.9), self.touch(2, 0.75 + dx, 0.1), self.touch(3, 0.05 + dx, 0.1)]
+        }
+        recognizer.process(.init(touches: three(0), timestamp: 0.1))
+        recognizer.process(.init(touches: three(0.05), timestamp: 0.2))
+        recognizer.process(.init(touches: three(0.2), timestamp: 0.25))
+        recognizer.process(.init(touches: three(0.45), timestamp: 0.3))
+
+        XCTAssertEqual(fired, [.twoFingerSwipeRight])
+        XCTAssertTrue(ticks.isEmpty)
+        XCTAssertEqual(cancelled, 1)
+    }
+
+    func testLiftingOneFingerMidRepeatDoesNotFireATwoFingerSwipe() {
+        let recognizer = GestureRecognizer()
+        var fired: [Trigger.GestureKind] = []
+        var ticks: [Trigger.GestureKind] = []
+        var cancelled = 0
+        recognizer.onGesture = { fired.append($0) }
+        recognizer.onSwipeTick = { ticks.append($0) }
+        recognizer.onRepeatCancelled = { cancelled += 1 }
+
+        let fingers: (Double) -> [MultitouchGestureEngine.Touch] = { x in
+            [self.touch(1, x, 0.5), self.touch(2, x, 0.55), self.touch(3, x, 0.6)]
+        }
+        recognizer.process(.init(touches: fingers(0.3), timestamp: 0))
+        recognizer.process(.init(touches: fingers(0.45), timestamp: 0.05)) // fires right
+        XCTAssertEqual(fired, [.threeFingerSwipeRight])
+
+        // One finger lifts; the remaining two travel well past both the
+        // swipe threshold and the first-tick grace, in both directions.
+        recognizer.process(.init(touches: [touch(1, 0.45, 0.5), touch(2, 0.45, 0.55)], timestamp: 0.1))
+        recognizer.process(.init(touches: [touch(1, 0.15, 0.5), touch(2, 0.15, 0.55)], timestamp: 0.15))
+        recognizer.process(.init(touches: [touch(1, 0.7, 0.5), touch(2, 0.7, 0.55)], timestamp: 0.2))
+
+        XCTAssertEqual(fired, [.threeFingerSwipeRight], "no twoFingerSwipe* from the leftover fingers")
+        XCTAssertTrue(ticks.isEmpty, "distance ticks pause while the finger set differs")
+        XCTAssertEqual(cancelled, 0, "a lifted finger pauses the repeat rather than cancelling it")
+    }
+
+    func testBriefExtraFingerFlickerDoesNotCancelTheRepeat() {
+        let recognizer = GestureRecognizer()
+        var ticks: [Trigger.GestureKind] = []
+        var cancelled = 0
+        recognizer.onSwipeTick = { ticks.append($0) }
+        recognizer.onRepeatCancelled = { cancelled += 1 }
+
+        let fingers: (Double) -> [MultitouchGestureEngine.Touch] = { x in
+            [self.touch(1, x, 0.5), self.touch(2, x, 0.55), self.touch(3, x, 0.6)]
+        }
+        recognizer.process(.init(touches: fingers(0.1), timestamp: 0))
+        recognizer.process(.init(touches: fingers(0.25), timestamp: 0.05)) // fires right
+
+        // A 4th contact shows up for ~20ms (driver blob split), then goes.
+        let flicker = fingers(0.25) + [touch(4, 0.26, 0.52)]
+        recognizer.process(.init(touches: flicker, timestamp: 0.06))
+        recognizer.process(.init(touches: flicker, timestamp: 0.07))
+        recognizer.process(.init(touches: fingers(0.25), timestamp: 0.08))
+        recognizer.process(.init(touches: fingers(0.47), timestamp: 0.12)) // +0.22, past the first-tick grace
+
+        XCTAssertEqual(cancelled, 0)
+        XCTAssertEqual(ticks, [.threeFingerSwipeRight])
+    }
+
+    func testWristArcIntoTheAdjacentDiagonalDoesNotFireADirectionChange() {
+        let recognizer = GestureRecognizer()
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        let fingers: (Double, Double) -> [MultitouchGestureEngine.Touch] = { x, y in
+            [self.touch(1, x, y), self.touch(2, x, y + 0.05), self.touch(3, x, y + 0.1)]
+        }
+        recognizer.process(.init(touches: fingers(0.1, 0.3), timestamp: 0))
+        recognizer.process(.init(touches: fingers(0.25, 0.3), timestamp: 0.05)) // fires right
+        // 45° up-right drift, 0.14 of travel — past the 0.08 swipe
+        // threshold, but only one compass sector away from Right.
+        recognizer.process(.init(touches: fingers(0.35, 0.4), timestamp: 0.1))
+
+        XCTAssertEqual(fired, [.threeFingerSwipeRight])
+    }
+
+    func testDuplicateTouchIdInAFrameDoesNotCrash() {
+        let recognizer = GestureRecognizer()
+        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        recognizer.process(.init(touches: [touch(1, 0.3, 0.5), touch(1, 0.31, 0.5), touch(2, 0.35, 0.5)], timestamp: 0))
+        recognizer.process(.init(touches: [touch(1, 0.5, 0.5), touch(1, 0.51, 0.5), touch(2, 0.55, 0.5)], timestamp: 0.05))
+    }
+
     // MARK: - Split swipe (2 fingers down, one anchored, one swipes up/down)
 
     func testLeftFingerSwipesUpWhileRightFingerStaysAnchored() {
@@ -316,6 +424,94 @@ final class GestureRecognizerTests: XCTestCase {
         recognizer.process(.init(touches: [touch(3, 0.31, 0.5), touch(2, 0.6, 0.5)], timestamp: 0.1))
 
         XCTAssertTrue(fired.isEmpty)
+    }
+
+    // MARK: - Multi-finger cluster gate (surfaceSizeMM / maxMultiFingerGestureSpreadMM)
+
+    func testThreeFingerSwipeFiresRegardlessOfSpreadWhenGateIsUnset() {
+        let recognizer = GestureRecognizer()
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        // Finger 1 and finger 3 start 0.6 apart in x — 78mm on a 130mm-wide
+        // trackpad, above the 70mm default ceiling — but the gate is
+        // opt-in, so this must still fire.
+        let fingers: (Double) -> [MultitouchGestureEngine.Touch] = { x in
+            [self.touch(1, x, 0.5), self.touch(2, x + 0.3, 0.5), self.touch(3, x + 0.6, 0.5)]
+        }
+
+        recognizer.process(.init(touches: fingers(0.1), timestamp: 0))
+        recognizer.process(.init(touches: fingers(0.3), timestamp: 0.05))
+        recognizer.process(.init(touches: [], timestamp: 0.1))
+
+        XCTAssertEqual(fired, [.threeFingerSwipeRight])
+    }
+
+    func testThreeFingerSwipeDoesNotFireWhenFingersStartTooSpreadApart() {
+        let recognizer = GestureRecognizer()
+        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        // 78mm between the outer two fingers — above the default 70mm
+        // ceiling — should suppress the whole gesture.
+        let fingers: (Double) -> [MultitouchGestureEngine.Touch] = { x in
+            [self.touch(1, x, 0.5), self.touch(2, x + 0.3, 0.5), self.touch(3, x + 0.6, 0.5)]
+        }
+
+        recognizer.process(.init(touches: fingers(0.1), timestamp: 0))
+        recognizer.process(.init(touches: fingers(0.3), timestamp: 0.05))
+        recognizer.process(.init(touches: [], timestamp: 0.1))
+
+        XCTAssertTrue(fired.isEmpty)
+    }
+
+    func testThreeFingerSwipeStillFiresWhenFingersStartWithinTheSpreadThreshold() {
+        let recognizer = GestureRecognizer()
+        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        let fingers: (Double) -> [MultitouchGestureEngine.Touch] = { x in
+            [self.touch(1, x, 0.5), self.touch(2, x + 0.02, 0.55), self.touch(3, x + 0.04, 0.6)]
+        }
+
+        recognizer.process(.init(touches: fingers(0.2), timestamp: 0))
+        recognizer.process(.init(touches: fingers(0.35), timestamp: 0.05))
+        recognizer.process(.init(touches: fingers(0.5), timestamp: 0.1))
+        recognizer.process(.init(touches: [], timestamp: 0.15))
+
+        XCTAssertEqual(fired, [.threeFingerSwipeRight])
+    }
+
+    func testThreeFingerTapDoesNotFireWhenFingersStartTooSpreadApart() {
+        let recognizer = GestureRecognizer()
+        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        let fingers = [touch(1, 0.1, 0.5), touch(2, 0.4, 0.5), touch(3, 0.7, 0.5)]
+        recognizer.process(.init(touches: fingers, timestamp: 0))
+        recognizer.process(.init(touches: [], timestamp: 0.05)) // quick lift, no movement
+        recognizer.process(.init(touches: [], timestamp: 0.09)) // past the noise-tolerance grace period
+
+        XCTAssertTrue(fired.isEmpty)
+    }
+
+    /// Regression guard: the cluster gate only applies at 3+ fingers —
+    /// an ordinary two-finger swipe (both fingers travelling together, not
+    /// split) must be unaffected even with the same wide starting spread
+    /// that would gate a 3-finger gesture.
+    func testTwoFingerSwipeIsUnaffectedByTheThreeFingerClusterGate() {
+        let recognizer = GestureRecognizer()
+        recognizer.surfaceSizeMM = CGSize(width: 130, height: 80)
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+
+        recognizer.process(.init(touches: [touch(1, 0.1, 0.5), touch(2, 0.7, 0.5)], timestamp: 0)) // 78mm apart
+        recognizer.process(.init(touches: [touch(1, 0.1, 0.8), touch(2, 0.7, 0.8)], timestamp: 0.05))
+
+        XCTAssertEqual(fired, [.twoFingerSwipeUp])
     }
 
     // MARK: - Split tap (2 fingers down, one anchored, the other lifts and taps again)

@@ -107,6 +107,15 @@ final class TrackpadManager {
             let limit = Int(self.trackpadRecognizer.maxSplitGestureFingerDistanceMM)
             self.activityLog.log(.info, "Split gesture blocked: fingers were \(String(format: "%.1f", distanceMM))mm apart (limit \(limit)mm)")
         }
+        // Same diagnostic pattern as onSplitGestureGated above, for the
+        // 3+-finger cluster gate — lets maxMultiFingerGestureSpreadMM get
+        // tuned against real numbers instead of guesswork, the same way
+        // 35mm replaced the originally-guessed 5mm for the split gate.
+        trackpadRecognizer.onMultiFingerGestureGated = { [weak self] fingerCount, distanceMM in
+            guard let self else { return }
+            let limit = Int(self.trackpadRecognizer.maxMultiFingerGestureSpreadMM)
+            self.activityLog.log(.info, "\(fingerCount)-finger gesture blocked: fingers were \(String(format: "%.1f", distanceMM))mm apart (limit \(limit)mm)")
+        }
 
         trackpadEngine.onFrame = { [weak self] frame in
             // Runs on MultitouchSupport's own callback thread, not main —
@@ -189,6 +198,12 @@ final class TrackpadManager {
         recognizer.onSwipeTick = { _ in
             DispatchQueue.main.async {
                 repeatSession.tickDistanceActions()
+            }
+        }
+        recognizer.onRepeatCancelled = { [weak self] in
+            DispatchQueue.main.async {
+                repeatSession.stopRepeating(reason: "finger set changed mid-hold")
+                self?.activityLog.log(.info, "Repeat cancelled: a finger landed or moved outside the gesture mid-hold")
             }
         }
     }

@@ -107,6 +107,27 @@ public final class GestureRecognizer {
     /// with fingers deliberately touching.
     public var maxSplitGestureFingerDistanceMM: CGFloat = 35
 
+    /// Maximum distance apart (in mm, via `surfaceSizeMM`) any two of 3+
+    /// simultaneously-touching fingers' touch-down positions can be for an
+    /// ordinary N-finger swipe or tap (N >= 3) to be recognized at all —
+    /// requires the whole set to have landed as one genuine cluster, not
+    /// just any N-finger-down posture. Doesn't apply to 2-finger gestures:
+    /// plain two-finger swipes/taps have no cluster requirement, and
+    /// split-swipe/split-tap use `maxSplitGestureFingerDistanceMM` instead.
+    /// Only takes effect when `surfaceSizeMM` is set. 70mm is an estimate,
+    /// not yet confirmed against real hardware the way the two-finger
+    /// gate's 35mm was — tune it using `onMultiFingerGestureGated`'s
+    /// reported distances the same way.
+    public var maxMultiFingerGestureSpreadMM: CGFloat = 70
+
+    /// Fires with the finger count and the actual measured max pairwise
+    /// distance (mm) whenever an N-finger (N >= 3) gesture got suppressed
+    /// for exceeding `maxMultiFingerGestureSpreadMM` — lets `TrackpadManager`
+    /// surface real numbers in its Console view instead of guessing at what
+    /// ceiling is realistic. Diagnostic only; never fires when
+    /// `surfaceSizeMM` is unset.
+    public var onMultiFingerGestureGated: ((Int, CGFloat) -> Void)?
+
     /// User-facing tuning knob: 0 (least sensitive — requires a larger,
     /// more deliberate swipe, and stricter stillness for a tap) to 1
     /// (most sensitive — small movements trigger easily). Defaults to
@@ -219,6 +240,23 @@ public final class GestureRecognizer {
         let isLeft: Bool
     }
     private var splitReferences: [Int32: FingerReference] = [:]
+
+    /// Per-finger touch-down position, tracked for every currently-touching
+    /// finger (any count) — what `fingersClusteredCloseEnough(count:)` needs
+    /// to check an N-finger (N >= 3) gesture's spread. Repopulated on every
+    /// start/rebase, same as `splitReferences`.
+    private var clusterReferences: [Int32: CGPoint] = [:]
+    /// Whether the fingers were clustered close enough
+    /// (`fingersClusteredCloseEnough`) at the moment this gesture's finger
+    /// count last reached a new peak. Unlike the live swipe check (which can
+    /// re-evaluate `clusterReferences` directly, since it only runs while
+    /// the touch set is unchanged since the last rebase), a final tap is
+    /// classified by `maxFingerCountThisGesture`, which may no longer match
+    /// whatever's currently in `clusterReferences` if fingers lifted off one
+    /// at a time — so the result has to be captured at the moment that peak
+    /// actually happened and carried forward. Reset to `true` at gesture
+    /// start.
+    private var peakClusterCloseEnough = true
     /// Global-only sensitivity (never a per-kind override) — needed for
     /// thresholds that have to resolve *before* any specific `GestureKind`
     /// is known, like classifying which of two fingers is the anchor
@@ -291,6 +329,22 @@ public final class GestureRecognizer {
     /// by design) per-tick distance right after crossing the swipe
     /// threshold that fired the first switch.
     private var isAwaitingFirstDistanceTick = false
+    /// When an *extra* finger (beyond the count the repeating swipe fired
+    /// with) landed mid-hold — `nil` while the count matches. Reported
+    /// symptom this fixes: a 2-finger swipe firing, then a stray third
+    /// finger landing in a far corner, used to re-fire as a fresh
+    /// `threeFingerSwipe*` through the direction-change path with no
+    /// cluster check at all, starting a Smoogler tab run nobody asked for.
+    /// A new finger that stays past `extraFingerCancelDelay` cancels the
+    /// repeat outright; a shorter one is treated as driver count flicker.
+    private var extraFingerSince: TimeInterval?
+    private static let extraFingerCancelDelay: TimeInterval = 0.05
+    /// Minimum angle between the repeating direction and a candidate new
+    /// one before a mid-hold direction change fires. 60° rules out the
+    /// adjacent compass sector (45° away) — a natural wrist arc during a
+    /// horizontal Smoogler slide used to re-fire as a diagonal kind —
+    /// while still allowing a genuine reversal or a 90° turn.
+    private static let minDirectionChangeDegrees: Double = 60
     /// How much larger the very first distance-repeat tick's travel
     /// requirement is than a normal tick's — deliberately a big margin
     /// (not just "a bit more"), so continuous multi-tab repeating only
@@ -321,6 +375,12 @@ public final class GestureRecognizer {
     /// that already fired — the "repeat while held" rules that opted into
     /// distance mode use this instead of a fixed timer to re-fire.
     public var onSwipeTick: ((GestureKind) -> Void)?
+    /// Fires when a repeating swipe is cancelled mid-hold because the
+    /// finger set changed underneath it (an extra finger landed and stayed,
+    /// or the fingers came back no longer clustered) — `TrackpadManager`
+    /// stops its repeat-while-held timer here, since `onTouchEnded` won't
+    /// arrive until every finger actually lifts.
+    public var onRepeatCancelled: (() -> Void)?
     /// One processed frame can occasionally cover several tick-widths at
     /// once (a fast real swipe, or a noise burst) — capped so a single
     /// noisy frame can't fire an unbounded number of real side effects
@@ -359,9 +419,12 @@ public final class GestureRecognizer {
                 hasFiredFastScrollEdgeThisGesture = false
                 lastFrameTimestamp = frame.timestamp
                 splitReferences = Self.splitReferences(for: touching)
+                clusterReferences = Self.clusterReferences(for: touching)
+                peakClusterCloseEnough = fingersClusteredCloseEnough(count: count)
                 pendingSplitTap = nil
                 distanceRepeatKind = nil
                 distanceRepeatBaseline = nil
+                extraFingerSince = nil
             } else if count != activeFingerCount {
                 // A finger joined or left since the last frame — rebase
                 // rather than measure "travel" across the count change.
@@ -392,10 +455,27 @@ public final class GestureRecognizer {
                     pendingSplitTap = nil
                 }
                 referenceCentroid = centroid
+                let isNewPeak = count > maxFingerCountThisGesture
                 maxFingerCountThisGesture = max(maxFingerCountThisGesture, count)
                 splitReferences = Self.splitReferences(for: touching)
-                if distanceRepeatKind != nil {
+                clusterReferences = Self.clusterReferences(for: touching)
+                if isNewPeak {
+                    peakClusterCloseEnough = fingersClusteredCloseEnough(count: count)
+                }
+                if let repeatCount = distanceRepeatKind?.fingerCount {
                     distanceRepeatBaseline = centroid
+                    if count > repeatCount {
+                        if extraFingerSince == nil { extraFingerSince = frame.timestamp }
+                    } else {
+                        extraFingerSince = nil
+                        // Back to the swipe's own finger count (after a
+                        // flicker or a finger lifting and landing again):
+                        // the re-landed finger has to sit in the cluster
+                        // too, or it's a palm/stray finger elsewhere.
+                        if count == repeatCount, !fingersClusteredCloseEnough(count: count) {
+                            cancelDistanceRepeat()
+                        }
+                    }
                 }
             } else {
                 if !hasFiredSwipeThisGesture, let ref = referenceCentroid {
@@ -429,19 +509,39 @@ public final class GestureRecognizer {
                         if hypot(dx, dy) > Self.minPossibleSwipeDistanceThreshold,
                            let kind = Self.swipeKind(dx: dx, dy: dy, fingerCount: count),
                            hypot(dx, dy) > swipeDistanceThreshold(for: kind) {
-                            hasFiredSwipeThisGesture = true
-                            // A swipe means this contact was never a tap —
-                            // don't let a later tap spuriously pair with
-                            // whatever the last real tap was.
-                            lastTapTime = nil
-                            lastTapCentroid = nil
-                            lastTapFingerCount = nil
-                            distanceRepeatKind = kind
-                            distanceRepeatBaseline = centroid
-                            isAwaitingFirstDistanceTick = true
-                            if debugLoggingEnabled { NSLog("InputCustomizer: recognized swipe \(kind.rawValue)") }
-                            onGesture?(kind)
+                            if fingersClusteredCloseEnough(count: count) {
+                                hasFiredSwipeThisGesture = true
+                                // A swipe means this contact was never a
+                                // tap — don't let a later tap spuriously
+                                // pair with whatever the last real tap was.
+                                lastTapTime = nil
+                                lastTapCentroid = nil
+                                lastTapFingerCount = nil
+                                distanceRepeatKind = kind
+                                distanceRepeatBaseline = centroid
+                                isAwaitingFirstDistanceTick = true
+                                if debugLoggingEnabled { NSLog("InputCustomizer: recognized swipe \(kind.rawValue)") }
+                                onGesture?(kind)
+                            } else {
+                                // Shape matched but the fingers started too
+                                // spread out — consume without firing, same
+                                // reasoning as SplitSwipeMatch.matchedButGated:
+                                // there's no separate "ordinary swipe"
+                                // fallback to defer to here.
+                                hasFiredSwipeThisGesture = true
+                                if debugLoggingEnabled { NSLog("InputCustomizer: \(count)-finger swipe shape matched but fingers started too spread out — suppressed") }
+                            }
                         }
+                    }
+                } else if let currentKind = distanceRepeatKind, currentKind.fingerCount != count {
+                    // The finger set no longer matches the swipe that's
+                    // repeating — pause ticks and direction changes rather
+                    // than reinterpret the new set as a different-count
+                    // swipe. A lifted finger just pauses (a repeat-while-
+                    // held timer deliberately survives it; see
+                    // `onTouchEnded`); an extra finger that stays cancels.
+                    if let since = extraFingerSince, frame.timestamp - since >= Self.extraFingerCancelDelay {
+                        cancelDistanceRepeat()
                     }
                 } else if let currentKind = distanceRepeatKind, let baseline = distanceRepeatBaseline {
                     // Re-run the same angle-first-then-magnitude check
@@ -460,6 +560,7 @@ public final class GestureRecognizer {
                     if hypot(dx, dy) > Self.minPossibleSwipeDistanceThreshold,
                        let candidateKind = Self.swipeKind(dx: dx, dy: dy, fingerCount: count),
                        candidateKind != currentKind,
+                       Self.angleBetween(candidateKind, currentKind) > Self.minDirectionChangeDegrees,
                        hypot(dx, dy) > swipeDistanceThreshold(for: candidateKind) {
                         distanceRepeatKind = candidateKind
                         distanceRepeatBaseline = centroid
@@ -510,10 +611,13 @@ public final class GestureRecognizer {
             lastFrameTimestamp = nil
             pendingEndSince = nil
             splitReferences = [:]
+            clusterReferences = [:]
+            peakClusterCloseEnough = true
             pendingSplitTap = nil
             distanceRepeatKind = nil
             distanceRepeatBaseline = nil
             isAwaitingFirstDistanceTick = false
+            extraFingerSince = nil
         }
         onTouchEnded?()
         // `kind` only depends on finger count (already fully known), so
@@ -525,7 +629,8 @@ public final class GestureRecognizer {
               let ref = referenceCentroid,
               let endCentroid = lastCentroid,
               let kind = Self.tapKind(fingerCount: maxFingerCountThisGesture),
-              hypot(endCentroid.x - ref.x, endCentroid.y - ref.y) < tapMaxMovement(for: kind) else {
+              hypot(endCentroid.x - ref.x, endCentroid.y - ref.y) < tapMaxMovement(for: kind),
+              peakClusterCloseEnough else {
             if debugLoggingEnabled, let start = gestureStartTime {
                 NSLog("InputCustomizer: gesture ended without a match (maxFingers=\(maxFingerCountThisGesture), duration=\(frame.timestamp - start)s, firedSwipe=\(hasFiredSwipeThisGesture))")
             }
@@ -762,6 +867,63 @@ public final class GestureRecognizer {
         let closeEnough = distance <= maxSplitGestureFingerDistanceMM
         if !closeEnough { onSplitGestureGated?(distance) }
         return closeEnough
+    }
+
+    /// Builds fresh touch-down references for every currently-touching
+    /// finger, regardless of count — unlike `splitReferences(for:)`, which
+    /// only populates at exactly 2.
+    private static func clusterReferences(for touching: [MultitouchGestureEngine.Touch]) -> [Int32: CGPoint] {
+        // `uniquingKeysWith`, not `uniqueKeysWithValues` — the latter traps
+        // on a duplicate touch id, and this runs on MultitouchSupport's
+        // callback thread against whatever the private driver reports.
+        Dictionary(touching.map { ($0.id, $0.position) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Ends the current distance-repeat session without ending the hold —
+    /// `hasFiredSwipeThisGesture` stays set, so nothing else fires until
+    /// every finger lifts. See `extraFingerSince`.
+    private func cancelDistanceRepeat() {
+        if debugLoggingEnabled, let kind = distanceRepeatKind { NSLog("InputCustomizer: finger set changed mid-hold — cancelled repeat of \(kind.rawValue)") }
+        distanceRepeatKind = nil
+        distanceRepeatBaseline = nil
+        isAwaitingFirstDistanceTick = false
+        extraFingerSince = nil
+        onRepeatCancelled?()
+    }
+
+    /// Smallest angle (0...180°) between two swipe kinds' directions; 180
+    /// when either has no direction, so the caller's check never blocks on
+    /// missing data.
+    private static func angleBetween(_ a: GestureKind, _ b: GestureKind) -> Double {
+        guard let x = a.swipeAngleDegrees, let y = b.swipeAngleDegrees else { return 180 }
+        let diff = abs(x - y).truncatingRemainder(dividingBy: 360)
+        return min(diff, 360 - diff)
+    }
+
+    /// Whether every pair among `count` fingers currently in
+    /// `clusterReferences` (captured at touch-down) sits within
+    /// `maxMultiFingerGestureSpreadMM` of each other. `true` whenever
+    /// `surfaceSizeMM` is unset (gate disabled), `count < 3` (2-finger
+    /// gestures aren't clustered by this gate — see
+    /// `maxMultiFingerGestureSpreadMM`'s doc comment), or `clusterReferences`
+    /// doesn't actually hold `count` entries (fails open rather than
+    /// blocking on stale/mismatched data).
+    private func fingersClusteredCloseEnough(count: Int) -> Bool {
+        guard count >= 3, let surfaceSizeMM else { return true }
+        let positions = Array(clusterReferences.values)
+        guard positions.count == count else { return true }
+        for i in positions.indices {
+            for j in positions.indices where j > i {
+                let dx = (positions[i].x - positions[j].x) * surfaceSizeMM.width
+                let dy = (positions[i].y - positions[j].y) * surfaceSizeMM.height
+                let distance = hypot(dx, dy)
+                if distance > maxMultiFingerGestureSpreadMM {
+                    onMultiFingerGestureGated?(count, distance)
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     /// 8 compass directions, ordered to match `Int((angle + 22.5) / 45) % 8`
