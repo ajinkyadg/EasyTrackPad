@@ -159,6 +159,7 @@ enum RuleSummary {
         case let .launchApp(bundleIdentifier): return "Open \(InstalledApp.displayName(for: bundleIdentifier))"
         case let .sendMediaKey(key): return key.displayName
         case .missionControl: return "Mission Control"
+        case let .appSwitcher(forward): return forward ? "App switcher: next" : "App switcher: previous"
         case .none: return "No action"
         }
     }

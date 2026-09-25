@@ -1,3 +1,4 @@
+import os
 import Cocoa
 import Combine
 import GestureEngine
@@ -30,6 +31,7 @@ import ActionExecution
 /// exact IOService directly sidesteps that entirely, so there's no longer
 /// a reason to keep them mutually exclusive.
 final class TrackpadManager {
+    static let latencyLog = Logger(subsystem: "InputCustomizer", category: "latency")
     private let settingsStore: SettingsStore
     private let visualizerModel: TouchVisualizerModel
     private let activityLog: ActivityLog
@@ -69,12 +71,12 @@ final class TrackpadManager {
         trackpadRepeatSession = RepeatSession(
             settingsStore: settingsStore, activityLog: activityLog, label: "trackpad",
             isTouching: { [trackpadRecognizer] in trackpadRecognizer.isTouching },
-            apply: { [weak self] action in self?.apply(action: action) }
+            apply: { [weak self] action in self?.apply(action: action, gesture: nil, device: .trackpad) }
         )
         magicMouseRepeatSession = RepeatSession(
             settingsStore: settingsStore, activityLog: activityLog, label: "magic mouse",
             isTouching: { [magicMouseRecognizer] in magicMouseRecognizer.isTouching },
-            apply: { [weak self] action in self?.apply(action: action) }
+            apply: { [weak self] action in self?.apply(action: action, gesture: nil, device: .magicMouse) }
         )
     }
 
@@ -116,6 +118,16 @@ final class TrackpadManager {
             self.activityLog.log(.info, "\(fingerCount)-finger gesture blocked: fingers were \(String(format: "%.1f", distanceMM))mm apart (limit \(limit)mm)")
         }
 
+        // Logs real hands' distances so the hold-tap gates can be tuned.
+        trackpadRecognizer.onHoldTapGated = { [weak self] reason, valueMM in
+            let value = valueMM.map { String(format: " (%.1fmm)", $0) } ?? ""
+            Self.latencyLog.log("hold-tap ignored: \(reason, privacy: .public)\(value, privacy: .public)")
+            self?.activityLog.log(.info, "Hold-tap ignored: \(reason)\(value)")
+        }
+        trackpadRecognizer.onHoldTapTiming = { liftDuration in
+            Self.latencyLog.log("hold-tap recognized: finger up \(liftDuration * 1000, format: .fixed(precision: 0), privacy: .public)ms")
+        }
+
         trackpadEngine.onFrame = { [weak self] frame in
             // Runs on MultitouchSupport's own callback thread, not main —
             // see MultitouchGestureEngine.onFrame's doc comment.
@@ -149,6 +161,8 @@ final class TrackpadManager {
         // Corner clicks are measured in mm, so they only get a surface size
         // when the device really is the built-in pad it was measured on.
         trackpadTouchTracker.surfaceSizeMM = CornerZoneSpec.surfaceMM(engineBoundToBuiltIn: trackpadEngine.isBoundToBuiltIn)
+        // Hold-taps are gated in mm too, and fail closed without a size.
+        trackpadRecognizer.holdTapSurfaceSizeMM = CornerZoneSpec.surfaceMM(engineBoundToBuiltIn: trackpadEngine.isBoundToBuiltIn)
         activityLog.log(.info, trackpadEngine.isBoundToBuiltIn
             ? "Corner clicks: built-in trackpad, 130×80mm"
             : "Corner clicks off: trackpad size unknown (not the built-in trackpad)")
@@ -184,21 +198,29 @@ final class TrackpadManager {
             self?.overrideValue(for: kind, device: device, \.repeatByDistanceSensitivityOverride)
         }
         recognizer.onGesture = { [weak self] kind in
+            let recognizedAt = CACurrentMediaTime()
             // A recognized gesture is rare relative to raw frame delivery
             // (up to ~120Hz) — only this hop actually needs the main
             // thread, since firing an action can post CGEvents / touch UI.
             DispatchQueue.main.async {
                 guard let self else { return }
+                let startedAt = CACurrentMediaTime()
                 let matches = self.fire(gesture: kind, device: device)
+                if kind.category == .holdTap {
+                    let hopMS = (startedAt - recognizedAt) * 1000, runMS = (CACurrentMediaTime() - startedAt) * 1000
+                    Self.latencyLog.log("hold-tap \(kind.rawValue, privacy: .public): main-thread hop \(hopMS, format: .fixed(precision: 1), privacy: .public)ms, action \(runMS, format: .fixed(precision: 1), privacy: .public)ms")
+                }
                 repeatSession.startRepeating(matches)
                 if self.visualizerModel.isActive, self.visualizerModel.previewDevice == device {
                     self.visualizerModel.recognized(gesture: kind)
                 }
             }
         }
-        recognizer.onTouchEnded = {
+        recognizer.onTouchEnded = { [weak self] in
             DispatchQueue.main.async {
                 repeatSession.stopRepeating()
+                // Only the trackpad ever holds ⌘ (see appSwitcherHoldsCommand).
+                if device == .trackpad { self?.releaseAppSwitcher(reason: "fingers lifted") }
             }
         }
         recognizer.onSwipeTick = { _ in
@@ -224,6 +246,53 @@ final class TrackpadManager {
         trackpadTouchTracker.reset()
         trackpadRepeatSession.stopRepeating()
         magicMouseRepeatSession.stopRepeating()
+        releaseAppSwitcher(reason: "engines stopped")
+    }
+
+    // MARK: - App switcher (held ⌘)
+
+    private var appSwitcherWatch: Timer?
+    private var appSwitcherHeldSince: Date?
+    /// A held ⌘ that outlives its gesture turns every keystroke into a
+    /// shortcut, so release is belt and braces: the trackpad's fingers
+    /// lifting (`onTouchEnded`), this poll of its `isTouching` in case that
+    /// one notification is missed, a hard cap, `stop()`, and app quit.
+    private static let appSwitcherMaxHold: TimeInterval = 5
+
+    /// ⌘ is held only for a trackpad hold-tap: its fingers are resting on
+    /// purpose, and lifting them is a clear "done". A Magic Mouse is gripped
+    /// the whole time it's used, and a swipe or tap has no rest to hold
+    /// across — those get a single ⌘Tab / ⌘⇧Tab press.
+    static func appSwitcherHoldsCommand(gesture: Trigger.GestureKind?, device: InputDevice) -> Bool {
+        device == .trackpad && gesture?.category == .holdTap
+    }
+
+    private func stepAppSwitcher(forward: Bool, gesture: Trigger.GestureKind?, device: InputDevice) {
+        guard Self.appSwitcherHoldsCommand(gesture: gesture, device: device), trackpadRecognizer.isTouching else {
+            releaseAppSwitcher(reason: nil)
+            ActionRunner.sendAppSwitcherPress(forward: forward)
+            return
+        }
+        ActionRunner.AppSwitcher.step(forward: forward)
+        if appSwitcherHeldSince == nil { appSwitcherHeldSince = Date() }
+        guard appSwitcherWatch == nil else { return }
+        appSwitcherWatch = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if !self.trackpadRecognizer.isTouching {
+                self.releaseAppSwitcher(reason: "backstop: no fingers down")
+            } else if let since = self.appSwitcherHeldSince, Date().timeIntervalSince(since) > Self.appSwitcherMaxHold {
+                self.releaseAppSwitcher(reason: "held longer than \(Int(Self.appSwitcherMaxHold))s")
+            }
+        }
+    }
+
+    private func releaseAppSwitcher(reason: String?) {
+        appSwitcherWatch?.invalidate()
+        appSwitcherWatch = nil
+        appSwitcherHeldSince = nil
+        guard ActionRunner.AppSwitcher.isHolding else { return }
+        ActionRunner.AppSwitcher.release()
+        if let reason { activityLog.log(.info, "App switcher: released ⌘ (\(reason))") }
     }
 
     private func handleMagnify(_ event: NSEvent) {
@@ -259,12 +328,12 @@ final class TrackpadManager {
             }
         }
         for rule in matches {
-            apply(action: rule.action)
+            apply(action: rule.action, gesture: gesture, device: device)
         }
         return matches
     }
 
-    private func apply(action: Action) {
+    private func apply(action: Action, gesture: Trigger.GestureKind?, device: InputDevice) {
         activityLog.log(.executing, action.shortDescription)
         switch action {
         case let .runShellCommand(command):
@@ -275,6 +344,8 @@ final class TrackpadManager {
             ActionRunner.send(mediaKey: key)
         case .missionControl:
             ActionRunner.showMissionControl()
+        case let .appSwitcher(forward):
+            stepAppSwitcher(forward: forward, gesture: gesture, device: device)
         case let .remapToKey(keyCode, modifiers):
             ActionRunner.sendKeyPress(keyCode: keyCode, modifiers: modifiers)
         case .none:

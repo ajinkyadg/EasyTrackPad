@@ -194,6 +194,8 @@ final class MouseManager {
             ActionRunner.send(mediaKey: key)
         case .missionControl:
             ActionRunner.showMissionControl()
+        case let .appSwitcher(forward):
+            ActionRunner.sendAppSwitcherPress(forward: forward)
         case let .remapToKey(keyCode, modifiers):
             ActionRunner.sendKeyPress(keyCode: keyCode, modifiers: modifiers)
         case .none:

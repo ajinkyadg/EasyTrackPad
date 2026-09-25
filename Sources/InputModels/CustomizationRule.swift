@@ -95,6 +95,10 @@ public enum Action: Codable, Hashable {
     case launchApp(bundleIdentifier: String)
     case sendMediaKey(MediaKey)
     case missionControl
+    /// Steps the ⌘Tab app switcher. On a touch gesture ⌘ stays held while
+    /// fingers remain down, so repeated taps walk the switcher and lifting
+    /// picks the app; elsewhere it's a plain ⌘Tab / ⌘⇧Tab press.
+    case appSwitcher(forward: Bool)
     case none
 
     public enum MediaKey: String, Codable, CaseIterable {
@@ -111,6 +115,7 @@ public enum Action: Codable, Hashable {
         case let .launchApp(bundleIdentifier): return "Launch \(bundleIdentifier)"
         case let .sendMediaKey(key): return key.rawValue
         case .missionControl: return "Mission Control"
+        case let .appSwitcher(forward): return forward ? "App switcher: next" : "App switcher: previous"
         case .none: return "No action"
         }
     }

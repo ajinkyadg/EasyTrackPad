@@ -110,6 +110,21 @@ public enum GesturePresets {
             trigger: .trackpadGesture(.threeFingerSwipeRight),
             action: .remapToKey(keyCode: 124, modifiers: controlModifier) // Right Arrow + Control
         ),
+        // Hold three fingers, tap beside them: right steps the app
+        // switcher forward (⌘Tab), left back (⌘⇧Tab). ⌘ stays held while
+        // the fingers rest, so taps walk the switcher; lifting picks.
+        RulePreset(
+            name: "App Switcher: Next",
+            device: .trackpad,
+            trigger: .trackpadGesture(.threeFingerHoldTapRight),
+            action: .appSwitcher(forward: true)
+        ),
+        RulePreset(
+            name: "App Switcher: Previous",
+            device: .trackpad,
+            trigger: .trackpadGesture(.threeFingerHoldTapLeft),
+            action: .appSwitcher(forward: false)
+        ),
         RulePreset(
             name: "Play/Pause",
             device: .trackpad,

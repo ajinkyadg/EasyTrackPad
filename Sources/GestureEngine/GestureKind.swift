@@ -42,6 +42,10 @@ public enum GestureKind: String, Codable, CaseIterable {
     /// through past the trackpad's physical edge instead of needing a
     /// lift-and-reposition to keep going.
     case twoFingerFastScrollToBottomEdge
+    /// Three fingers rest; the leftmost or rightmost one lifts and taps
+    /// back down while the other two stay put as anchors — the 3-finger
+    /// counterpart of `twoFingerLeftTap`/`RightTap`.
+    case threeFingerHoldTapLeft, threeFingerHoldTapRight
 
     /// camelCase raw value split on uppercase boundaries, e.g.
     /// "threeFingerSwipeUpLeft" -> ["three","Finger","Swipe","Up","Left"].
@@ -70,7 +74,7 @@ public enum GestureKind: String, Codable, CaseIterable {
     /// *how* to draw the icon (dots + arrow vs. dots only vs. a pinch/
     /// rotate symbol), independent of finger count or direction.
     public enum Category {
-        case swipe, splitSwipe, splitTap, tap, doubleTap, pinchIn, pinchOut, rotateClockwise, rotateCounterClockwise, fastScrollToEdge
+        case swipe, splitSwipe, splitTap, holdTap, tap, doubleTap, pinchIn, pinchOut, rotateClockwise, rotateCounterClockwise, fastScrollToEdge
     }
 
     private static let splitSwipeCases: Set<GestureKind> = [
@@ -88,6 +92,7 @@ public enum GestureKind: String, Codable, CaseIterable {
         default:
             if Self.splitSwipeCases.contains(self) { return .splitSwipe }
             if Self.splitTapCases.contains(self) { return .splitTap }
+            if holdTapIsLeft != nil { return .holdTap }
             if isDoubleTap { return .doubleTap }
             let words = rawValueWords
             if words.count >= 3, words[2] == "Tap" { return .tap }
@@ -104,6 +109,16 @@ public enum GestureKind: String, Codable, CaseIterable {
         switch self {
         case .twoFingerLeftSwipeUp, .twoFingerLeftSwipeDown, .twoFingerLeftTap: return true
         case .twoFingerRightSwipeUp, .twoFingerRightSwipeDown, .twoFingerRightTap: return false
+        default: return nil
+        }
+    }
+
+    /// For `.holdTap` kinds only: whether the tapping finger is the
+    /// leftmost of the three. `nil` for every other category.
+    public var holdTapIsLeft: Bool? {
+        switch self {
+        case .threeFingerHoldTapLeft: return true
+        case .threeFingerHoldTapRight: return false
         default: return nil
         }
     }
@@ -155,6 +170,8 @@ public enum GestureKind: String, Codable, CaseIterable {
         case .twoFingerLeftTap: return "Split Tap: Left Finger"
         case .twoFingerRightTap: return "Split Tap: Right Finger"
         case .twoFingerFastScrollToBottomEdge: return "Fast Scroll to Bottom Edge"
+        case .threeFingerHoldTapLeft: return "3 Fingers: Left Finger Taps"
+        case .threeFingerHoldTapRight: return "3 Fingers: Right Finger Taps"
         default: break
         }
         let words = rawValueWords
@@ -179,7 +196,7 @@ public enum GestureKind: String, Codable, CaseIterable {
         case .rotateCounterClockwise: return "arrow.counterclockwise"
         case .twoFingerLeftSwipeUp, .twoFingerRightSwipeUp: return "arrow.up"
         case .twoFingerLeftSwipeDown, .twoFingerRightSwipeDown: return "arrow.down"
-        case .twoFingerLeftTap, .twoFingerRightTap: return "hand.tap.fill"
+        case .twoFingerLeftTap, .twoFingerRightTap, .threeFingerHoldTapLeft, .threeFingerHoldTapRight: return "hand.tap.fill"
         case .twoFingerFastScrollToBottomEdge: return "arrow.down.to.line"
         default: break
         }

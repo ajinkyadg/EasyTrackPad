@@ -2,6 +2,7 @@ import SwiftUI
 import ServiceManagement
 import Combine
 import InputModels
+import ActionExecution
 
 @main
 struct InputCustomizerApp: App {
@@ -64,6 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         checkPermissionsAndStart()
         GestureGlyphRenderer.prewarm()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Never quit with the app switcher's ⌘ still held down.
+        ActionRunner.AppSwitcher.release()
     }
 
     private func setupStatusItem() {

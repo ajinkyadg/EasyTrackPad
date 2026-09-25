@@ -137,6 +137,8 @@ final class KeyboardManager {
             ActionRunner.send(mediaKey: key)
         case .missionControl:
             ActionRunner.showMissionControl()
+        case let .appSwitcher(forward):
+            ActionRunner.sendAppSwitcherPress(forward: forward)
         case .none:
             break
         }

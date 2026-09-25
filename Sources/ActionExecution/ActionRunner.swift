@@ -131,6 +131,44 @@ public enum ActionRunner {
         }
     }
 
+    /// ⌘Tab / ⌘⇧Tab as a single press — the app switcher on a trigger
+    /// that has no "fingers still down" state to hold ⌘ across.
+    public static func sendAppSwitcherPress(forward: Bool) {
+        let command = UInt(CGEventFlags.maskCommand.rawValue)
+        let shift = UInt(CGEventFlags.maskShift.rawValue)
+        sendKeyPress(keyCode: tabKeyCode, modifiers: forward ? command : command | shift)
+    }
+
+    private static let tabKeyCode: UInt16 = 48
+
+    /// Drives the app switcher like a held ⌘: the first step presses ⌘ and
+    /// leaves it down, each step sends Tab (⇧Tab backwards), and `release()`
+    /// lets go of ⌘, which picks the highlighted app. Main thread only.
+    /// Every caller must guarantee a `release()` — a ⌘ left down turns
+    /// every later keystroke into a shortcut.
+    public enum AppSwitcher {
+        public private(set) static var isHolding = false
+
+        public static func step(forward: Bool) {
+            let source = CGEventSource(stateID: .hidSystemState)
+            if !isHolding {
+                postModifierKeyEvent(keyCode: 55, keyDown: true, flags: .maskCommand, source: source)
+                isHolding = true
+            }
+            let flags: CGEventFlags = forward ? .maskCommand : [.maskCommand, .maskShift]
+            if !forward { postModifierKeyEvent(keyCode: 56, keyDown: true, flags: flags, source: source) }
+            postModifierKeyEvent(keyCode: tabKeyCode, keyDown: true, flags: flags, source: source)
+            postModifierKeyEvent(keyCode: tabKeyCode, keyDown: false, flags: flags, source: source)
+            if !forward { postModifierKeyEvent(keyCode: 56, keyDown: false, flags: .maskCommand, source: source) }
+        }
+
+        public static func release() {
+            guard isHolding else { return }
+            isHolding = false
+            postModifierKeyEvent(keyCode: 55, keyDown: false, flags: [], source: CGEventSource(stateID: .hidSystemState))
+        }
+    }
+
     private static func postModifierKeyEvent(keyCode: UInt16, keyDown: Bool, flags: CGEventFlags, source: CGEventSource?) {
         guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown) else { return }
         event.flags = flags

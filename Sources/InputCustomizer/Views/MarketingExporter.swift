@@ -30,6 +30,7 @@ enum MarketingExporter {
         ("split-swipe-left-finger-up", .twoFingerLeftSwipeUp, .trackpad),
         ("split-swipe-left-finger-down", .twoFingerLeftSwipeDown, .trackpad),
         ("split-tap-right-finger", .twoFingerRightTap, .trackpad),
+        ("hold-three-tap-left", .threeFingerHoldTapLeft, .trackpad),
         ("magic-mouse-swipe-right", .twoFingerSwipeRight, .mouse),
         ("magic-mouse-split-swipe-up", .twoFingerLeftSwipeUp, .mouse),
     ]

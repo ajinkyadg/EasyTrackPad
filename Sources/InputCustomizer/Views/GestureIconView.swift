@@ -435,6 +435,8 @@ struct GestureIconView: View {
             default:
                 if kind == .twoFingerFastScrollToBottomEdge {
                     drawFastScroll(&layer, surface: surface, size: size, motion: .moving(progress))
+                } else if let tapIsLeft = kind.holdTapIsLeft {
+                    drawHoldTap(&layer, tapIsLeft: tapIsLeft, surface: surface, size: size, motion: .tapping(progress, presses: 1))
                 } else if let movingIsLeft = kind.splitActiveFingerIsLeft {
                     drawSplit(&layer, movingIsLeft: movingIsLeft, angle: kind.swipeAngleDegrees, surface: surface, size: size,
                               motion: kind.swipeAngleDegrees == nil ? .tapping(progress, presses: 1) : .moving(progress))
@@ -548,6 +550,22 @@ struct GestureIconView: View {
             if motion.travel > 0.08 { drawTrail(&pad, from: motion.isStatic ? start : from, to: now, width: r * 1.4, bow: index == 0 ? 0.04 : -0.04) }
             drawDot(&pad, at: now, radius: r * motion.scale, filled: true, tilt: tilt)
         }
+    }
+
+    /// Three pads in the brand arc: the two anchors hollow, the outer one
+    /// on the tapping side solid, with a tap ripple.
+    private static func drawHoldTap(_ context: inout GraphicsContext, tapIsLeft: Bool, surface: GlyphSurface, size: CGSize, motion: Motion = .still) {
+        let layout = layout(for: surface, fingers: 3, size: size)
+        let r = layout.dotRadius
+        let points = basePoints(count: 3, layout: layout, size: size).map { clamp($0, radius: r, in: layout.content) }
+        let tapIndex = tapIsLeft ? 0 : 2
+        for (i, point) in points.enumerated() where i != tapIndex {
+            drawDot(&context, at: point, radius: r, filled: false, tilt: splay(i, of: 3))
+        }
+        var pad = context
+        pad.opacity = motion.opacity
+        if let phase = motion.ripple { drawRipple(&pad, at: points[tapIndex], radius: r, phase: phase) }
+        drawDot(&pad, at: points[tapIndex], radius: r * motion.scale, filled: true, tilt: splay(tapIndex, of: 3))
     }
 
     /// Two-finger swipe down plus a shoreline at the bottom edge — "to the end".

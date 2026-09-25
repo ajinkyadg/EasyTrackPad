@@ -29,6 +29,7 @@ struct RuleFormView: View {
     @State private var shellCommand: String
     @State private var bundleIdentifier: String
     @State private var mediaKey: Action.MediaKey
+    @State private var appSwitcherForward: Bool
     @State private var remapKeyCode: UInt16
     @State private var remapModifiers: UInt
     @State private var repeatsWhileHeld: Bool
@@ -59,6 +60,7 @@ struct RuleFormView: View {
         case remapToKey = "Keyboard shortcut"
         case mediaKey = "Media key"
         case missionControl = "Mission Control"
+        case appSwitcher = "App switcher"
         case launchApp = "Open app"
         case shellCommand = "Run shell command"
         var id: String { rawValue }
@@ -68,6 +70,7 @@ struct RuleFormView: View {
             case .remapToKey: return "command"
             case .mediaKey: return "playpause"
             case .missionControl: return "rectangle.3.group"
+            case .appSwitcher: return "square.stack.3d.forward.dottedline"
             case .launchApp: return "app"
             case .shellCommand: return "terminal"
             }
@@ -148,6 +151,7 @@ struct RuleFormView: View {
         var shellCommand = ""
         var bundleIdentifier = ""
         var mediaKey: Action.MediaKey = .playPause
+        var appSwitcherForward = true
         var remapKeyCode: UInt16 = KeyCodeMap.unset
         var remapModifiers: UInt = 0
         var repeatsWhileHeld = false
@@ -183,6 +187,7 @@ struct RuleFormView: View {
             }
             switch rule.action {
             case .missionControl: values.actionKind = .missionControl
+            case let .appSwitcher(forward): values.actionKind = .appSwitcher; values.appSwitcherForward = forward
             case let .runShellCommand(command): values.actionKind = .shellCommand; values.shellCommand = command
             case let .launchApp(bundleIdentifier): values.actionKind = .launchApp; values.bundleIdentifier = bundleIdentifier
             case let .sendMediaKey(key): values.actionKind = .mediaKey; values.mediaKey = key
@@ -241,6 +246,7 @@ struct RuleFormView: View {
         _shellCommand = State(initialValue: values.shellCommand)
         _bundleIdentifier = State(initialValue: values.bundleIdentifier)
         _mediaKey = State(initialValue: values.mediaKey)
+        _appSwitcherForward = State(initialValue: values.appSwitcherForward)
         _remapKeyCode = State(initialValue: values.remapKeyCode)
         _remapModifiers = State(initialValue: values.remapModifiers)
         _repeatsWhileHeld = State(initialValue: values.repeatsWhileHeld)
@@ -630,6 +636,14 @@ struct RuleFormView: View {
             }
         case .missionControl:
             EmptyView()
+        case .appSwitcher:
+            Picker("Direction", selection: $appSwitcherForward) {
+                Text("Next app (⌘⇥)").tag(true)
+                Text("Previous app (⌘⇧⇥)").tag(false)
+            }
+            Text("On a gesture, ⌘ stays held while your fingers rest, so each tap steps through the switcher. Lift to pick the app.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -678,6 +692,7 @@ struct RuleFormView: View {
         let action: Action
         switch actionKind {
         case .missionControl: action = .missionControl
+        case .appSwitcher: action = .appSwitcher(forward: appSwitcherForward)
         case .shellCommand: action = .runShellCommand(shellCommand)
         case .launchApp: action = .launchApp(bundleIdentifier: bundleIdentifier)
         case .mediaKey: action = .sendMediaKey(mediaKey)

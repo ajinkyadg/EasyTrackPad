@@ -280,6 +280,21 @@ Console.app for the `MTDeviceCreateDefault` failure `NSLog` from
 `MultitouchGestureEngine` to confirm, then file/track it as an OS-version
 compatibility issue.
 
+### 3-finger hold-tap and the app switcher
+
+Rest three fingers in a row, then lift the leftmost or rightmost one and
+tap it back down while the other two stay put (`threeFingerHoldTapLeft` /
+`Right`). Built-in trackpad only: its gates are in mm, and the size is
+only known for the built-in pad. Rejected attempts are logged to the
+Console view with the reason and measured distance, for tuning.
+
+The **App switcher** action, bound to a trackpad hold-tap, holds ⌘ while
+the fingers rest so each tap steps through the ⌘Tab switcher; lifting
+picks the app. On any other trigger it's a single ⌘Tab / ⌘⇧Tab press. ⌘
+is released when the fingers lift, by a poll backstop, after 5s, and on
+quit — but if the app crashes or is force-killed mid-hold, macOS can
+think ⌘ is still down. Press and release ⌘ once to clear it.
+
 ## Profiles
 
 Rules live inside **profiles** — named, self-contained sets of rules

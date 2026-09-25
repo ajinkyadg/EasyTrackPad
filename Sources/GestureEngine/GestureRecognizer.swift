@@ -303,6 +303,70 @@ public final class GestureRecognizer {
     }
     private var pendingSplitTap: PendingSplitTap?
 
+    // MARK: Hold-tap state (three fingers rest; the outer one taps)
+
+    /// Real surface size for hold-taps, in mm. `nil` disables them: only
+    /// the trackpad recognizer gets one, and only while bound to the
+    /// built-in trackpad it was measured on — a Magic Trackpad (bigger
+    /// glass) or Magic Mouse would get every mm gate below wrong.
+    /// Deliberately separate from `surfaceSizeMM`, whose gates fail open.
+    public var holdTapSurfaceSizeMM: CGSize?
+    /// Diagnostic: why a lift from three resting fingers didn't count,
+    /// with the measured mm where one applies.
+    public var onHoldTapGated: ((String, CGFloat?) -> Void)?
+    /// Diagnostic: a hold-tap fired, with how long the finger was off the glass.
+    public var onHoldTapTiming: ((_ liftDuration: TimeInterval) -> Void)?
+
+    private static let holdTapFingerCount = 3
+    /// How long three fingers must rest before the first tap of a hold —
+    /// longer than `tapMaxDuration`, so the staggered lift of an ordinary
+    /// 3-finger tap or swipe can't arm one.
+    private static let holdTapSettle: TimeInterval = 0.25
+    /// After a hold-tap fired, the fingers are known to be resting on
+    /// purpose, so the next tap only needs a short gap (fast stepping).
+    private static let holdTapRepeatGap: TimeInterval = 0.08
+    /// A resting finger's driver flicker can drop it for a frame or two;
+    /// a real lift-and-tap is off the glass longer than that.
+    private static let holdTapMinLiftTime: TimeInterval = 0.04
+    private static let holdTapMinLiftFrames = 3
+    /// Measured on the owner's hand: accepted taps 64–248ms, and natural
+    /// tap-backs rejected at the old 250ms cap ran 255–391ms. Longer than
+    /// this reads as a hesitation or a hand resettling (~300–600ms).
+    private static let holdTapMaxLiftTime: TimeInterval = 0.42
+    /// Fingertips resting in a row, not a palm plus fingers. Fingers of
+    /// different lengths rest in an arc: the owner's measured 15.1–16.6mm,
+    /// so 15mm rejected most natural rests. 19mm keeps a gap below a
+    /// resting thumb (25–40mm down). Tune from `onHoldTapGated`.
+    private static let holdTapMaxRowSpreadYMM: CGFloat = 19
+    private static let holdTapMaxPairMM: CGFloat = 50
+    /// The tapping finger has to come back down where it left — farther
+    /// is a hand repositioning, not a tap.
+    private static let holdTapMaxRelandMM: CGFloat = 15
+
+    /// Every touching finger's landing position and time, kept across
+    /// finger-count changes (`clusterReferences` is rebuilt on each), so
+    /// "the fingers haven't moved since they landed" is checkable — a
+    /// 3-finger drag that pauses must not count as resting.
+    private var landings: [Int32: (position: CGPoint, time: TimeInterval)] = [:]
+    private var previousTouchIDs: Set<Int32> = []
+    /// Last frame's positions, for the finger that just lifted.
+    private var previousPositions: [Int32: CGPoint] = [:]
+    private var countStableSince: TimeInterval?
+
+    private struct PendingHoldTap {
+        let stayerIDs: Set<Int32>
+        let liftedFrom: CGPoint
+        let isLeft: Bool
+        let since: TimeInterval
+        var frames = 1
+    }
+    private var pendingHoldTap: PendingHoldTap?
+    /// Once a hold-tap fires, nothing else in the same hold may (no swipe
+    /// from the fingers drifting, no end-of-hold tap, no split tap) — but
+    /// further hold-taps still can. `hasFiredSwipeThisGesture` can't
+    /// double for this: it would block the repeat taps.
+    private var hasFiredHoldTapThisGesture = false
+
     /// Which ordinary swipe kind is currently being distance-repeated,
     /// and the point its next increment of travel is measured from.
     /// Populated only when an ordinary (.swipe-category) swipe fires —
@@ -403,6 +467,12 @@ public final class GestureRecognizer {
 
         if count > 0 {
             pendingEndSince = nil // touches are back; any pending end was just a blip
+            let touchIDs = Set(touching.map(\.id))
+            let priorLandings = landings
+            landings = landings.filter { touchIDs.contains($0.key) }
+            for touch in touching where landings[touch.id] == nil {
+                landings[touch.id] = (touch.position, frame.timestamp)
+            }
             let centroid = centroid(of: touching)
             if activeFingerCount == 0 {
                 if debugLoggingEnabled { NSLog("InputCustomizer: gesture start, \(count) finger(s)") }
@@ -419,13 +489,29 @@ public final class GestureRecognizer {
                 distanceRepeatKind = nil
                 distanceRepeatBaseline = nil
                 extraFingerSince = nil
+                countStableSince = frame.timestamp
+                pendingHoldTap = nil
+                hasFiredHoldTapThisGesture = false
             } else if count != activeFingerCount {
+                // Any count change resolves or discards a pending hold-tap;
+                // only then can a new one arm (tapper landing on anchors).
+                if let pending = pendingHoldTap,
+                   let kind = resolveHoldTap(pending, touching: touching, timestamp: frame.timestamp) {
+                    hasFiredHoldTapThisGesture = true
+                    lastTapTime = nil
+                    lastTapCentroid = nil
+                    lastTapFingerCount = nil
+                    if debugLoggingEnabled { NSLog("InputCustomizer: recognized hold-tap \(kind.rawValue)") }
+                    onGesture?(kind)
+                }
+                pendingHoldTap = armHoldTap(previousCount: activeFingerCount, touching: touching, priorLandings: priorLandings, timestamp: frame.timestamp)
+                countStableSince = frame.timestamp
                 // A finger joined or left since the last frame — rebase
                 // rather than measure "travel" across the count change.
                 // Before rebasing, see whether this change resolves (or
                 // starts) a pending "anchor + tap": a departed finger
                 // landing again shortly, while the other stayed put.
-                if let kind = resolvePendingSplitTap(touching: touching, timestamp: frame.timestamp) {
+                if !hasFiredHoldTapThisGesture, let kind = resolvePendingSplitTap(touching: touching, timestamp: frame.timestamp) {
                     // A tap can repeat (unlike a swipe, which only fires
                     // once per hold) — hasFiredSwipeThisGesture is
                     // deliberately left untouched so the anchor+tap can
@@ -437,7 +523,7 @@ public final class GestureRecognizer {
                     if debugLoggingEnabled { NSLog("InputCustomizer: recognized split tap \(kind.rawValue)") }
                     onGesture?(kind)
                 }
-                if activeFingerCount == 2, count == 1, let onlyTouch = touching.first,
+                if !hasFiredHoldTapThisGesture, activeFingerCount == 2, count == 1, let onlyTouch = touching.first,
                    let survivor = splitReferences[onlyTouch.id] {
                     pendingSplitTap = PendingSplitTap(
                         anchor: survivor,
@@ -472,7 +558,8 @@ public final class GestureRecognizer {
                     }
                 }
             } else {
-                if !hasFiredSwipeThisGesture, let ref = referenceCentroid {
+                trackPendingHoldTap(touching: touching)
+                if !hasFiredSwipeThisGesture, !hasFiredHoldTapThisGesture, let ref = referenceCentroid {
                     switch splitSwipeKind(touching: touching) {
                     case .recognized(let kind):
                         hasFiredSwipeThisGesture = true
@@ -575,9 +662,13 @@ public final class GestureRecognizer {
                     }
                 }
             }
-            checkFastScrollToBottomEdge(centroid: centroid, count: count, timestamp: frame.timestamp)
+            if !hasFiredHoldTapThisGesture {
+                checkFastScrollToBottomEdge(centroid: centroid, count: count, timestamp: frame.timestamp)
+            }
             lastCentroid = centroid
             lastFrameTimestamp = frame.timestamp
+            previousTouchIDs = touchIDs
+            previousPositions = Dictionary(touching.map { ($0.id, $0.position) }, uniquingKeysWith: { first, _ in first })
             activeFingerCount = count
             touchingLock.withLock { $0 = true }
             return
@@ -610,12 +701,19 @@ public final class GestureRecognizer {
             distanceRepeatBaseline = nil
             isAwaitingFirstDistanceTick = false
             extraFingerSince = nil
+            landings = [:]
+            previousTouchIDs = []
+            previousPositions = [:]
+            countStableSince = nil
+            pendingHoldTap = nil
+            hasFiredHoldTapThisGesture = false
         }
         onTouchEnded?()
         // `kind` only depends on finger count (already fully known), so
         // it's resolved before the movement check below can use its own
         // per-rule sensitivity override rather than a single global one.
         guard !hasFiredSwipeThisGesture,
+              !hasFiredHoldTapThisGesture,
               let start = gestureStartTime,
               frame.timestamp - start < tapMaxDuration,
               let ref = referenceCentroid,
@@ -742,6 +840,116 @@ public final class GestureRecognizer {
         return false
     }
 
+    // MARK: - Hold-tap
+
+    /// Arms when one of three resting fingers lifts (3 -> 2) and it's the
+    /// leftmost or rightmost of them — the other two stay down as anchors.
+    /// Every gate fails closed.
+    private func armHoldTap(previousCount: Int, touching: [MultitouchGestureEngine.Touch],
+                            priorLandings: [Int32: (position: CGPoint, time: TimeInterval)], timestamp: TimeInterval) -> PendingHoldTap? {
+        guard let surface = holdTapSurfaceSizeMM,
+              previousCount == Self.holdTapFingerCount,
+              touching.count == Self.holdTapFingerCount - 1,
+              !hasFiredSwipeThisGesture,
+              Set(touching.map(\.id)).count == touching.count,
+              let stableSince = countStableSince else { return nil }
+        let restNeeded = hasFiredHoldTapThisGesture ? Self.holdTapRepeatGap : Self.holdTapSettle
+        guard timestamp - stableSince >= restNeeded else {
+            onHoldTapGated?("fingers hadn't rested long enough (\(Int((timestamp - stableSince) * 1000))ms)", nil)
+            return nil
+        }
+        let stayerIDs = Set(touching.map(\.id))
+        let liftedIDs = previousTouchIDs.subtracting(stayerIDs)
+        guard stayerIDs.isSubset(of: previousTouchIDs), liftedIDs.count == 1,
+              let liftedID = liftedIDs.first, let liftedFrom = previousPositions[liftedID],
+              let liftedLanding = priorLandings[liftedID] else { return nil }
+        // The lifted finger must itself have been resting, not dragging.
+        let liftedRested = hypot(liftedFrom.x - liftedLanding.position.x, liftedFrom.y - liftedLanding.position.y) <= splitTapAnchorMaxMovement
+            && timestamp - liftedLanding.time >= restNeeded
+        guard liftedRested, fingersRestingSinceLanding(touching, minAge: restNeeded, at: timestamp) else {
+            onHoldTapGated?("fingers moved before the tap", nil)
+            return nil
+        }
+        func mm(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+            hypot((a.x - b.x) * surface.width, (a.y - b.y) * surface.height)
+        }
+        let three = touching.map(\.position) + [liftedFrom]
+        let ys = three.map(\.y)
+        let rowSpreadY = (ys.max()! - ys.min()!) * surface.height
+        guard rowSpreadY <= Self.holdTapMaxRowSpreadYMM else {
+            onHoldTapGated?("fingers not in a row", rowSpreadY)
+            return nil
+        }
+        for i in three.indices {
+            for j in three.indices where j > i {
+                let distance = mm(three[i], three[j])
+                guard distance <= Self.holdTapMaxPairMM else {
+                    onHoldTapGated?("fingers too spread out", distance)
+                    return nil
+                }
+            }
+        }
+        let stayerXs = touching.map(\.position.x)
+        let isLeft: Bool
+        if liftedFrom.x < stayerXs.min()! {
+            isLeft = true
+        } else if liftedFrom.x > stayerXs.max()! {
+            isLeft = false
+        } else {
+            onHoldTapGated?("the middle finger lifted", nil)
+            return nil
+        }
+        return PendingHoldTap(stayerIDs: stayerIDs, liftedFrom: liftedFrom, isLeft: isLeft, since: timestamp)
+    }
+
+    /// While the finger is up, the two anchors must stay put.
+    private func trackPendingHoldTap(touching: [MultitouchGestureEngine.Touch]) {
+        guard var pending = pendingHoldTap else { return }
+        guard Set(touching.map(\.id)) == pending.stayerIDs,
+              fingersRestingSinceLanding(touching, minAge: 0, at: nil) else {
+            pendingHoldTap = nil
+            return
+        }
+        pending.frames += 1
+        pendingHoldTap = pending
+    }
+
+    /// Fires when the finger comes back down (2 -> 3) near where it lifted,
+    /// with both anchors still resting, after a lift long enough to be real
+    /// and short enough to be a tap.
+    private func resolveHoldTap(_ pending: PendingHoldTap, touching: [MultitouchGestureEngine.Touch], timestamp: TimeInterval) -> GestureKind? {
+        guard let surface = holdTapSurfaceSizeMM,
+              touching.count == Self.holdTapFingerCount,
+              Set(touching.map(\.id)).count == touching.count,
+              !hasFiredSwipeThisGesture else { return nil }
+        let stayers = touching.filter { pending.stayerIDs.contains($0.id) }
+        let newcomers = touching.filter { !pending.stayerIDs.contains($0.id) }
+        guard stayers.count == 2, newcomers.count == 1, let tapper = newcomers.first,
+              fingersRestingSinceLanding(stayers, minAge: 0, at: nil) else { return nil }
+        let offTime = timestamp - pending.since
+        guard offTime >= Self.holdTapMinLiftTime, offTime < Self.holdTapMaxLiftTime, pending.frames >= Self.holdTapMinLiftFrames else {
+            onHoldTapGated?("lift too short or too long (\(Int(offTime * 1000))ms, \(pending.frames) frames)", nil)
+            return nil
+        }
+        let reland = hypot((tapper.position.x - pending.liftedFrom.x) * surface.width, (tapper.position.y - pending.liftedFrom.y) * surface.height)
+        guard reland <= Self.holdTapMaxRelandMM else {
+            onHoldTapGated?("finger came down too far from where it lifted", reland)
+            return nil
+        }
+        onHoldTapTiming?(offTime)
+        return pending.isLeft ? .threeFingerHoldTapLeft : .threeFingerHoldTapRight
+    }
+
+    /// Whether each touch is within `splitTapAnchorMaxMovement` of where it
+    /// landed (and, given a timestamp, landed at least `minAge` earlier).
+    private func fingersRestingSinceLanding(_ fingers: [MultitouchGestureEngine.Touch], minAge: TimeInterval, at timestamp: TimeInterval?) -> Bool {
+        fingers.allSatisfy { finger in
+            guard let landing = landings[finger.id] else { return false }
+            if let timestamp, timestamp - landing.time < minAge { return false }
+            return hypot(finger.position.x - landing.position.x, finger.position.y - landing.position.y) <= splitTapAnchorMaxMovement
+        }
+    }
+
     /// Builds fresh left/right per-finger references when exactly 2
     /// fingers are down; empty otherwise (a 3rd finger, or dropping to 1,
     /// means "two fingers down" no longer holds, so `.splitSwipe` can't
@@ -749,6 +957,9 @@ public final class GestureRecognizer {
     private static func splitReferences(for touching: [MultitouchGestureEngine.Touch]) -> [Int32: FingerReference] {
         guard touching.count == 2 else { return [:] }
         let sorted = touching.sorted { $0.position.x < $1.position.x }
+        // A dictionary literal traps on a duplicate key, and the private
+        // driver can report two contacts with one id — no split gesture then.
+        guard sorted[0].id != sorted[1].id else { return [:] }
         return [
             sorted[0].id: FingerReference(position: sorted[0].position, isLeft: true),
             sorted[1].id: FingerReference(position: sorted[1].position, isLeft: false)
