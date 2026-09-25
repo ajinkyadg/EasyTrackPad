@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <!-- Concept A "Glide": a glass trackpad with three fingers mid-swipe.
-       Same visual grammar as the in-app GestureIconView (staggered dots + fading trails). -->
+       Same visual grammar as the in-app GestureIconView (staggered dots + fading trails + seed arrowhead). -->
   <defs>
     <path id="sq" d="M284,100 H740 C860,100 924,164 924,284 V740 C924,860 860,924 740,924 H284 C164,924 100,860 100,740 V284 C100,164 164,100 284,100 Z"/>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
@@ -50,6 +50,9 @@
     <circle cx="496" cy="480" r="48" fill="url(#dot)"/>
     <circle cx="616" cy="540" r="48" fill="url(#dot)"/>
   </g>
-  <!-- leading chevron -->
-  <path d="M704 468 L748 512 L704 556" fill="none" stroke="#3B30CF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>
+  <!-- leading arrowhead: the same soft seed shape as GestureIconView.drawArrowhead -->
+  <g opacity="0.55">
+    <path d="M747.2 512 Q716 535.5 684.8 551.2 Q697.3 519.8 711 512 Q697.3 504.2 684.8 472.8 Q716 488.5 747.2 512 Z"
+          fill="#3B30CF" stroke="#3B30CF" stroke-width="17.6" stroke-linejoin="round"/>
+  </g>
 </svg>

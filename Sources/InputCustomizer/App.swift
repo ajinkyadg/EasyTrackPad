@@ -49,6 +49,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if MarketingExporter.runIfRequested() { exit(0) }
+        #endif
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
         observePauseState()
@@ -108,8 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// The app icon's mark — a trackpad outline with three staggered
-    /// fingers — as an 18pt template image; paused adds a slash (with a
-    /// knocked-out gap) so the "off" state reads as off at a glance. Drawn
+    /// fingers — as an 18pt template image. Paused swaps the fingers for a
+    /// slash (with a knocked-out gap): at 18pt any diagonal slices two of
+    /// the dots into slivers, so an empty, struck-through pad reads cleaner. Drawn
     /// in code from the same geometry as Assets/MenuBarIcon*.svg, so it
     /// needs no bundled resource and renders crisply at any scale.
     private static func statusIcon(isPaused: Bool) -> NSImage? {
@@ -118,10 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let pad = NSBezierPath(roundedRect: NSRect(x: 1.75, y: 3.25, width: 14.5, height: 11.5), xRadius: 2.75, yRadius: 2.75)
             pad.lineWidth = 1.5
             pad.stroke()
-            for (x, y) in [(5.6, 10.2), (9.0, 7.8), (12.4, 10.2)] {
-                NSBezierPath(ovalIn: NSRect(x: x - 1.6, y: y - 1.6, width: 3.2, height: 3.2)).fill()
-            }
-            if isPaused {
+            if !isPaused {
+                for (x, y) in [(5.6, 10.2), (9.0, 7.8), (12.4, 10.2)] {
+                    NSBezierPath(ovalIn: NSRect(x: x - 1.6, y: y - 1.6, width: 3.2, height: 3.2)).fill()
+                }
+            } else {
                 let slash = NSBezierPath()
                 slash.move(to: NSPoint(x: 2.2, y: 1.2))
                 slash.line(to: NSPoint(x: 16.8, y: 16.8))

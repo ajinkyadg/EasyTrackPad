@@ -22,5 +22,7 @@
     <string>InputCustomizer uses Apple Events to launch apps and run actions you configure.</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>InputCustomizer needs Accessibility access to detect key, mouse, and trackpad input so it can apply your customizations.</string>
+    <key>NSAccentColorName</key>
+    <string>AccentColor</string>
 </dict>
 </plist>

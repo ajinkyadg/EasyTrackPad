@@ -24,6 +24,12 @@ cp "$INFO_PLIST_PATH" "$CONTENTS_DIR/Info.plist"
 # Prebuilt from Assets/AppIcon*.svg by Scripts/make-icon.sh; referenced by
 # CFBundleIconFile in Info.plist. Copied before signing so it's sealed.
 cp "$PROJECT_DIR/Assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+# Compiles the brand AccentColor into Assets.car; Info.plist's
+# NSAccentColorName points at it, so Multicolor users get brand indigo
+# while anyone who picked a specific accent keeps theirs.
+xcrun actool "$PROJECT_DIR/Assets/Brand.xcassets" --compile "$RESOURCES_DIR" \
+    --platform macosx --minimum-deployment-target 13.0 \
+    --output-partial-info-plist "$BUILD_PATH/actool-partial.plist" >/dev/null
 chmod 755 "$MACOS_DIR/$APP_NAME"
 
 LOCAL_IDENTITY_NAME="InputCustomizer Local Dev"

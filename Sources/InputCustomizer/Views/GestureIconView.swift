@@ -4,7 +4,7 @@ import GestureEngine
 import InputModels
 
 /// Which physical surface a gesture glyph is drawn on: the trackpad's
-/// pebble tile, or a Magic Mouse's egg-shaped shell — so a Magic Mouse
+/// pebble tile, or a Magic Mouse's narrow rounded shell — so a Magic Mouse
 /// rule is recognisable as one before its label is read.
 enum GlyphSurface: Hashable {
     case trackpad, mouse
@@ -51,9 +51,21 @@ struct GestureIconView: View {
 
     static let size = CGSize(width: 34 * aspectRatio, height: 34)
 
-    /// The system accent color, shared with the live touch dots and every
-    /// other tinted glyph in the app so the whole UI reads as one palette.
-    static let iconColor = Color.accentColor
+    /// The accent color (brand indigo for Multicolor users, via the
+    /// AccentColor asset), shared with the live touch dots and every other
+    /// tinted glyph so the whole UI reads as one palette.
+    static var iconColor: Color { colorOverride.map { Color(nsColor: $0) } ?? .accentColor }
+
+    /// Pins the glyph colour regardless of the system accent — marketing
+    /// renders must come out brand indigo on any machine.
+    static var colorOverride: NSColor?
+
+    /// White "2" fails contrast on light accents (yellow, orange, green).
+    static var badgeTextColor: Color {
+        let accent = (colorOverride ?? .controlAccentColor).usingColorSpace(.sRGB) ?? .controlAccentColor
+        let luminance = 0.2126 * accent.redComponent + 0.7152 * accent.greenComponent + 0.0722 * accent.blueComponent
+        return luminance > 0.5 ? .black.opacity(0.85) : .white
+    }
 
     /// One loop of the animation, in seconds.
     static let animationPeriod: Double = 2.0
@@ -89,6 +101,10 @@ struct GestureIconView: View {
         /// Vertical offset alternating per finger — a relaxed hand, not a ruler.
         let stagger: CGFloat
         let surface: GlyphSurface
+        /// Where resting pads sit: mid-tile on a trackpad, the upper third on
+        /// a mouse (fingers rest near the front — and mid-height pads on an
+        /// egg read as eyes).
+        var restY: CGFloat { surface == .mouse ? content.minY + content.height * 0.3 : content.midY }
     }
 
     static func layout(for surface: GlyphSurface, fingers: Int, size: CGSize) -> Layout {
@@ -115,7 +131,7 @@ struct GestureIconView: View {
     }
 
     static func mouseCapsule(in size: CGSize) -> CGRect {
-        let h = size.height * 0.9, w = size.height * 0.75
+        let h = size.height * 0.9, w = size.height * 0.63
         return CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
     }
 
@@ -233,7 +249,7 @@ struct GestureIconView: View {
         case .mouse:
             let c = mouseCapsule(in: size)
             return blobPath(center: CGPoint(x: c.midX, y: c.midY), rx: c.width / 2, ry: c.height / 2,
-                            exponent: 2.4, taper: 0.03, wobble: [(0.008, 3, 0.4)], samples: 72)
+                            exponent: 2.8, taper: 0.02, wobble: [(0.008, 3, 0.4)], samples: 72)
         }
     }
 
@@ -246,17 +262,6 @@ struct GestureIconView: View {
             Gradient(colors: [iconColor.opacity(0.07), iconColor.opacity(0.15)]),
             startPoint: CGPoint(x: bounds.midX, y: bounds.minY), endPoint: CGPoint(x: bounds.midX, y: bounds.maxY)))
         context.stroke(path, with: .color(iconColor.opacity(0.46)), style: StrokeStyle(lineWidth: strokeWidth(for: size)))
-        // The button seam is what makes the shell read as a mouse — a
-        // tapered groove, only where there's room for it.
-        if surface == .mouse, size.height >= 24 {
-            let c = mouseCapsule(in: size)
-            var seam = Path()
-            seam.move(to: CGPoint(x: c.midX, y: c.minY + c.height * 0.07))
-            seam.addLine(to: CGPoint(x: c.midX, y: c.minY + c.height * 0.24))
-            context.stroke(seam, with: .linearGradient(Gradient(colors: [iconColor.opacity(0.4), iconColor.opacity(0)]),
-                                                       startPoint: CGPoint(x: c.midX, y: c.minY + c.height * 0.07), endPoint: CGPoint(x: c.midX, y: c.minY + c.height * 0.26)),
-                           style: StrokeStyle(lineWidth: strokeWidth(for: size) * 0.55, lineCap: .round))
-        }
     }
 
     // MARK: - Primitives
@@ -342,14 +347,14 @@ struct GestureIconView: View {
     /// out of the outline (not over a pad), sized so the "2" stays
     /// legible at row size without dwarfing the glyph at large sizes.
     static func drawDoubleTapBadge(_ context: inout GraphicsContext, size: CGSize) {
-        let radius = max(size.height * 0.2, 5)
+        let radius = max(size.height * 0.16, 4.5)
         let center = CGPoint(x: size.width - radius - size.width * 0.01, y: radius + size.height * 0.01)
         let gap = max(size.height * 0.05, 1.5)
         var knockout = context
         knockout.blendMode = .destinationOut
         knockout.fill(blobPath(center: center, rx: radius + gap, ry: radius + gap, exponent: 2), with: .color(.black))
         context.fill(blobPath(center: center, rx: radius, ry: radius, exponent: 2), with: .color(iconColor))
-        let text = context.resolve(Text("2").font(.system(size: radius * 1.45, weight: .heavy, design: .rounded)).foregroundColor(.white))
+        let text = context.resolve(Text("2").font(.system(size: radius * 1.45, weight: .heavy, design: .rounded)).foregroundColor(badgeTextColor))
         context.draw(text, at: center)
     }
 
@@ -456,7 +461,7 @@ struct GestureIconView: View {
         let spacing = count > 1 ? min(usable / CGFloat(count - 1), size.width * 0.26) : 0
         let startX = rect.midX - CGFloat(count - 1) * spacing / 2
         return (0..<count).map { index in
-            let y = rect.midY + (index.isMultiple(of: 2) ? -layout.stagger : layout.stagger)
+            let y = layout.restY + (index.isMultiple(of: 2) ? -layout.stagger : layout.stagger)
             return CGPoint(x: startX + CGFloat(index) * spacing, y: y)
         }
     }
@@ -503,7 +508,8 @@ struct GestureIconView: View {
         for (i, dot) in current.enumerated() {
             drawDot(&pads, at: dot, radius: layout.dotRadius * motion.scale, filled: true, tilt: splay(i, of: count))
         }
-        if surface == .trackpad {
+        // Below ~24pt the arrowhead crowds the pads; lean and smears carry direction.
+        if surface == .trackpad, size.height >= 24 {
             var arrow = context
             arrow.opacity = motion.isStatic ? 1 : Double(motion.travel) * motion.opacity
             drawEdgeArrow(&arrow, degrees: angle, in: layout.content, size: size)
@@ -522,7 +528,7 @@ struct GestureIconView: View {
         for (index, point) in points.enumerated() {
             let isMover = (index == 0) == movingIsLeft
             let tilt = splay(index, of: 2)
-            let resting = clamp(CGPoint(x: point.x, y: layout.content.midY), radius: r, in: layout.content)
+            let resting = clamp(CGPoint(x: point.x, y: layout.restY), radius: r, in: layout.content)
             guard isMover, let angle else {
                 // The anchor stays put the whole loop; only the mover animates.
                 var pad = context
