@@ -314,8 +314,6 @@ public final class GestureRecognizer {
     /// Diagnostic: why a lift from three resting fingers didn't count,
     /// with the measured mm where one applies.
     public var onHoldTapGated: ((String, CGFloat?) -> Void)?
-    /// Diagnostic: a hold-tap fired, with how long the finger was off the glass.
-    public var onHoldTapTiming: ((_ liftDuration: TimeInterval) -> Void)?
 
     private static let holdTapFingerCount = 3
     /// How long three fingers must rest before the first tap of a hold —
@@ -349,8 +347,10 @@ public final class GestureRecognizer {
     /// 3-finger drag that pauses must not count as resting.
     private var landings: [Int32: (position: CGPoint, time: TimeInterval)] = [:]
     private var previousTouchIDs: Set<Int32> = []
-    /// Last frame's positions, for the finger that just lifted.
-    private var previousPositions: [Int32: CGPoint] = [:]
+    /// Last frame's touching fingers, for the one that just lifted — kept
+    /// as the frame's own array (no per-frame dictionary), scanned only
+    /// when a finger lifts.
+    private var previousTouching: [MultitouchGestureEngine.Touch] = []
     private var countStableSince: TimeInterval?
 
     private struct PendingHoldTap {
@@ -450,6 +450,19 @@ public final class GestureRecognizer {
 
     public init() {}
 
+    /// The last frame had no fingers touching and the blip grace period is
+    /// still running: the touch ends on the next frame past it.
+    public var isAwaitingEnd: Bool { pendingEndSince != nil }
+
+    /// After the last finger lifts, the driver sends an empty frame or two
+    /// and then goes silent, so no frame may ever arrive past the grace
+    /// period. Call once frames have stopped for a while: ends the touch as
+    /// if such a frame had arrived. A no-op while any finger is down.
+    public func endIfIdle() {
+        guard let since = pendingEndSince else { return }
+        process(.init(touches: [], timestamp: since + endGracePeriod))
+    }
+
     public func process(_ frame: MultitouchGestureEngine.Frame) {
         var touching = frame.touches.filter { Self.touchingStates.contains($0.state) }
         if touching.count >= 2, minimumFingerSeparation > 0, Self.hasImplausiblyClosePair(touching, minimumSeparation: minimumFingerSeparation) {
@@ -468,10 +481,15 @@ public final class GestureRecognizer {
         if count > 0 {
             pendingEndSince = nil // touches are back; any pending end was just a blip
             let touchIDs = Set(touching.map(\.id))
+            // Copy-on-write: this is free unless the finger set changed below.
             let priorLandings = landings
-            landings = landings.filter { touchIDs.contains($0.key) }
-            for touch in touching where landings[touch.id] == nil {
-                landings[touch.id] = (touch.position, frame.timestamp)
+            // ~125 frames/s but the finger set changes a few times per touch —
+            // only then is `landings` touched.
+            if touchIDs != previousTouchIDs {
+                landings = landings.filter { touchIDs.contains($0.key) }
+                for touch in touching where landings[touch.id] == nil {
+                    landings[touch.id] = (touch.position, frame.timestamp)
+                }
             }
             let centroid = centroid(of: touching)
             if activeFingerCount == 0 {
@@ -668,7 +686,7 @@ public final class GestureRecognizer {
             lastCentroid = centroid
             lastFrameTimestamp = frame.timestamp
             previousTouchIDs = touchIDs
-            previousPositions = Dictionary(touching.map { ($0.id, $0.position) }, uniquingKeysWith: { first, _ in first })
+            previousTouching = touching
             activeFingerCount = count
             touchingLock.withLock { $0 = true }
             return
@@ -703,7 +721,7 @@ public final class GestureRecognizer {
             extraFingerSince = nil
             landings = [:]
             previousTouchIDs = []
-            previousPositions = [:]
+            previousTouching = []
             countStableSince = nil
             pendingHoldTap = nil
             hasFiredHoldTapThisGesture = false
@@ -861,7 +879,7 @@ public final class GestureRecognizer {
         let stayerIDs = Set(touching.map(\.id))
         let liftedIDs = previousTouchIDs.subtracting(stayerIDs)
         guard stayerIDs.isSubset(of: previousTouchIDs), liftedIDs.count == 1,
-              let liftedID = liftedIDs.first, let liftedFrom = previousPositions[liftedID],
+              let liftedID = liftedIDs.first, let liftedFrom = previousTouching.first(where: { $0.id == liftedID })?.position,
               let liftedLanding = priorLandings[liftedID] else { return nil }
         // The lifted finger must itself have been resting, not dragging.
         let liftedRested = hypot(liftedFrom.x - liftedLanding.position.x, liftedFrom.y - liftedLanding.position.y) <= splitTapAnchorMaxMovement
@@ -936,7 +954,6 @@ public final class GestureRecognizer {
             onHoldTapGated?("finger came down too far from where it lifted", reland)
             return nil
         }
-        onHoldTapTiming?(offTime)
         return pending.isLeft ? .threeFingerHoldTapLeft : .threeFingerHoldTapRight
     }
 

@@ -623,6 +623,59 @@ final class GestureRecognizerTests: XCTestCase {
 
     // MARK: - onTouchEnded (drives TrackpadManager's "repeat while held")
 
+    /// Real hardware: after the last finger lifts, the driver sends one or
+    /// two empty frames ~8ms apart and then goes silent — no frame ever
+    /// arrives past the blip grace period, so the end needs a nudge.
+    func testTouchEndsWhenDriverGoesSilentAfterLift() {
+        let recognizer = GestureRecognizer()
+        var ended = 0
+        recognizer.onTouchEnded = { ended += 1 }
+        recognizer.process(.init(touches: [touch(1, 0.4, 0.5), touch(2, 0.5, 0.5), touch(3, 0.6, 0.5)], timestamp: 0))
+        recognizer.process(.init(touches: [touch(1, 0.4, 0.5, state: 5), touch(2, 0.5, 0.5, state: 5)], timestamp: 0.5))
+        recognizer.process(.init(touches: [], timestamp: 0.508))
+        XCTAssertEqual(ended, 0, "still inside the blip grace period")
+        XCTAssertTrue(recognizer.isAwaitingEnd)
+        recognizer.endIfIdle()
+        XCTAssertEqual(ended, 1)
+        XCTAssertFalse(recognizer.isAwaitingEnd)
+        XCTAssertFalse(recognizer.isTouching)
+    }
+
+    /// Before idle ending, a tap followed by driver silence never finished:
+    /// the next touch (even seconds later) merged into it and the tap was
+    /// lost. Now the tap fires on its own and the next touch starts fresh.
+    func testTapThenSilenceThenNewTouchDoesNotMerge() {
+        let recognizer = GestureRecognizer()
+        var fired: [Trigger.GestureKind] = []
+        recognizer.onGesture = { fired.append($0) }
+        let three = [touch(1, 0.4, 0.5), touch(2, 0.5, 0.5), touch(3, 0.6, 0.5)]
+        recognizer.process(.init(touches: three, timestamp: 0))
+        recognizer.process(.init(touches: three, timestamp: 0.05))
+        recognizer.process(.init(touches: [], timestamp: 0.06)) // driver then goes silent
+        XCTAssertEqual(fired, [])
+        recognizer.endIfIdle()
+        XCTAssertEqual(fired, [.threeFingerTap])
+
+        recognizer.process(.init(touches: three, timestamp: 0.5)) // a fresh touch 440ms later
+        recognizer.process(.init(touches: three, timestamp: 0.55))
+        recognizer.process(.init(touches: [], timestamp: 0.56))
+        recognizer.endIfIdle()
+        XCTAssertEqual(fired, [.threeFingerTap, .threeFingerTap], "a separate tap, not merged into the first and not a double tap")
+    }
+
+    func testEndIfIdleDoesNothingWhileFingersAreDown() {
+        let recognizer = GestureRecognizer()
+        var ended = 0
+        recognizer.onTouchEnded = { ended += 1 }
+        recognizer.process(.init(touches: [touch(1, 0.4, 0.5)], timestamp: 0))
+        recognizer.process(.init(touches: [], timestamp: 0.01)) // one-frame blip
+        recognizer.process(.init(touches: [touch(1, 0.4, 0.5)], timestamp: 0.02))
+        XCTAssertFalse(recognizer.isAwaitingEnd)
+        recognizer.endIfIdle()
+        XCTAssertEqual(ended, 0)
+        XCTAssertTrue(recognizer.isTouching)
+    }
+
     func testOnTouchEndedFiresOnceAtLiftOffAfterASwipe() {
         let recognizer = GestureRecognizer()
         var touchEndedCount = 0
